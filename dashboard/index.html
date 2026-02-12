@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transport Policing Command</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+
+  <!-- Auth View -->
+  <div id="auth-view" class="auth-container">
+    <div class="card auth-box glass">
+      <div class="brand justify-center mb-4">
+        <span>🛡️</span> TP-CMD // ACCESS
+      </div>
+
+      <!-- Login Step -->
+      <div id="login-step">
+        <div class="form-group">
+          <label>Operator ID</label>
+          <input type="text" id="logUser" placeholder="username">
+        </div>
+        <div class="form-group">
+          <label>Passcode</label>
+          <input type="password" id="logPass" placeholder="••••••••">
+        </div>
+        <button class="btn btn-primary w-full" onclick="App.login(logUser.value, logPass.value)">Initiate
+          Session</button>
+        <div class="mt-4 text-center">
+          <a href="#" onclick="App.showAuthStep('register')" style="color:var(--accent); font-size:0.85rem">Request
+            Clearance (Register)</a>
+        </div>
+      </div>
+
+      <!-- 2FA Step -->
+      <div id="2fa-step" class="hidden">
+        <p class="text-center mb-4">Enter 2FA Authentication Code</p>
+        <div class="form-group">
+          <input type="text" id="otp" placeholder="000 000"
+            style="text-align:center; padding: 1rem; letter-spacing: 5px; font-size: 1.2rem;">
+        </div>
+        <button class="btn btn-primary w-full" onclick="App.verify2FA(otp.value)">Verify Identity</button>
+      </div>
+
+      <!-- Register Step -->
+      <div id="register-step" class="hidden">
+        <div class="form-group">
+          <label>New Username</label>
+          <input type="text" id="regUser">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="regPass">
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="regRole">
+            <option value="operator">Operator</option>
+            <option value="admin">Administrator</option>
+          </select>
+        </div>
+        <button class="btn btn-primary w-full"
+          onclick="App.register(regUser.value, regPass.value, regRole.value)">Create Identity</button>
+        <div id="reg-out" class="mt-4"></div>
+        <div class="mt-4 text-center">
+          <a href="#" onclick="App.showAuthStep('login')" style="color:var(--text-muted); font-size:0.85rem">Back to
+            Login</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- App View -->
+  <div id="app-view" class="w-full flex hidden">
+
+    <!-- Sidebar -->
+    <nav class="sidebar glass">
+      <div class="brand">
+        <span>🛡️</span> TP-CMD
+      </div>
+      <ul class="nav-links">
+        <li class="nav-item active" href="#dashboard" onclick="location.hash='dashboard'">
+          <span>📊</span> Dashboard
+        </li>
+        <li class="nav-item" href="#ingest" onclick="location.hash='ingest'">
+          <span>📡</span> Ingestion Uplink
+        </li>
+        <li class="nav-item" href="#trust" onclick="location.hash='trust'">
+          <span>🤝</span> Trust Matrix
+        </li>
+        <li class="nav-item" href="#live" onclick="location.hash='live'">
+          <span>📹</span> Live Feed
+        </li>
+      </ul>
+      <div style="margin-top:auto">
+        <button class="btn btn-outline w-full btn-sm" onclick="App.logout()">Terminate Session</button>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- Dashboard View -->
+      <section id="view-dashboard" class="view-section">
+        <header class="flex justify-between items-center mb-4">
+          <h2>Operational Overview</h2>
+          <div class="flex gap-2">
+            <div class="badge badge-safe">System Online</div>
+            <div class="badge badge-warn"><span id="stat-alerts">0</span> Active Alerts</div>
+          </div>
+        </header>
+
+        <div class="grid grid-2">
+          <!-- Live Feed -->
+          <div class="card">
+            <div class="flex justify-between items-center mb-4">
+              <h3>Live Alert Feed</h3>
+              <button class="btn btn-sm btn-outline" onclick="App.loadAlerts()">Refresh</button>
+            </div>
+            <div id="alerts-feed" style="max-height: 400px; overflow-y: auto;">
+              <!-- Alerts injected here -->
+              <div class="text-center text-muted" style="padding: 2rem;">No active alerts</div>
+            </div>
+          </div>
+
+          <!-- Quick Stats or Map Placeholder -->
+          <div class="card">
+            <h3>System Status</h3>
+            <div class="grid grid-2 mt-4">
+              <div class="card" style="background:rgba(255,255,255,0.02)">
+                <h4 style="font-size:2rem; color:var(--primary)">98%</h4>
+                <small>Uptime</small>
+              </div>
+              <div class="card" style="background:rgba(255,255,255,0.02)">
+                <h4 style="font-size:2rem; color:var(--safe)">Safe</h4>
+                <small>Global Threat Level</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scan View -->
+      <section id="view-ingest" class="view-section hidden">
+        <header class="mb-4">
+          <h2>Unified Detection Scanner</h2>
+        </header>
+
+        <!-- Model Selector -->
+        <div class="card flex justify-between items-center" style="margin-bottom: 1.5rem; padding: 1rem 1.5rem;">
+          <div class="flex items-center" style="gap: 1rem;">
+            <span style="font-size: 1.2rem;">🧠</span>
+            <div>
+              <div style="font-weight: 600;">Detection Model</div>
+              <small id="model-status-text" style="color: var(--text-muted);">Loading...</small>
+            </div>
+          </div>
+          <div class="flex items-center" style="gap: 0.75rem;">
+            <select id="model-select" style="width: auto; min-width: 160px;">
+              <option value="yolov8n.pt">YOLOv8n (Nano — Fast)</option>
+              <option value="yolov8s.pt">YOLOv8s (Small)</option>
+              <option value="yolov8m.pt" selected>YOLOv8m (Medium — Balanced)</option>
+              <option value="yolov8l.pt">YOLOv8l (Large)</option>
+              <option value="yolov8x.pt">YOLOv8x (XLarge — Best)</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="App.switchModel()">Switch</button>
+          </div>
+        </div>
+
+        <!-- ROI Configuration -->
+        <!-- ROI Configuration -->
+        <div class="card" style="margin-bottom: 1.5rem; padding: 1rem 1.5rem;">
+          <div class="flex items-center justify-between" style="margin-bottom: 1rem;">
+            <div class="flex items-center" style="gap: 1rem;">
+              <span style="font-size: 1.2rem;">📐</span>
+              <div>
+                <div style="font-weight: 600;">Reserved Seat ROI</div>
+                <small id="roi-status" style="color: var(--text-muted);">Status: No ROI set</small>
+              </div>
+            </div>
+            <div class="flex" style="gap: 0.5rem">
+              <button class="btn btn-outline btn-sm" onclick="App.clearROI()">Clear</button>
+              <button class="btn btn-primary btn-sm" onclick="App.saveROI()">Save ROI</button>
+            </div>
+          </div>
+
+          <!-- Calibration Area -->
+          <div id="roi-calibration-area"
+            style="position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+            <div id="canvas-wrap" style="position:relative; width:100%; padding-bottom: 56.25%;">
+              <!-- 16:9 Aspect Ratio -->
+              <img id="preview-img"
+                src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iMzYwIiB2aWV3Qm94PSIwIDAgNjQwIDM2MCI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iIzEwMTAxMCIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZHxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjNDQ0IiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCI+QmxhY2sgQm94OiBEcmFnIHRvIHNldCBST0k8L3RleHQ+PC9zdmc+"
+                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />
+              <canvas id="roi-canvas"
+                style="position:absolute; top:0; left:0; width:100%; height:100%; cursor:crosshair;"></canvas>
+            </div>
+          </div>
+          <small style="display: block; text-align: center; color: var(--text-muted); margin-top: 0.5rem;">
+            Draw a box above to define the reserved seat area.
+          </small>
+        </div>
+
+        <!-- Unified Video Scan -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <h3 style="margin-bottom: 0.5rem;">🎯 Scan Video</h3>
+          <p style="color: var(--text-muted); margin-bottom: 1rem; font-size: 0.9rem;">
+            Upload a video clip to run <strong>all detection models</strong> at once —
+            YOLO person detection, gender classification, reserved seat violations, and violence analysis.
+          </p>
+
+          <div class="form-group">
+            <label for="scan-file">Video Clip (.mp4)</label>
+            <div id="scan-drop-zone"
+              style="border: 2px dashed var(--border); padding: 2rem; text-align: center; border-radius: var(--radius-md); position: relative; cursor: pointer;"
+              onclick="document.getElementById('scan-file').click()">
+              <input type="file" id="scan-file" accept="video/mp4,video/*"
+                style="opacity: 0; position: absolute; top:0; left:0; width:100%; height:100%; cursor: pointer;">
+              <p style="margin: 0; color: var(--text-muted);">📂 Click or drag a video file here</p>
+              <small id="scan-filename" style="color: var(--accent); display: none; margin-top: 0.5rem;"></small>
+            </div>
+          </div>
+
+          <button class="btn btn-primary w-full mt-2" onclick="App.scanVideo()" id="scan-btn">
+            🔬 Run Full Scan
+          </button>
+        </div>
+
+        <!-- Scan Results -->
+        <div id="scan-results" class="hidden">
+          <!-- Severity Banner -->
+          <div id="scan-severity-banner"
+            style="padding: 1rem 1.5rem; border-radius: var(--radius-md); margin-bottom: 1rem; font-weight: 700; font-size: 1.1rem; text-align: center;">
+          </div>
+
+          <div class="grid grid-2" style="margin-bottom: 1rem;">
+            <!-- Violence Card -->
+            <div class="card" id="scan-violence-card">
+              <div class="flex items-center" style="gap: 0.75rem; margin-bottom: 0.75rem;">
+                <span style="font-size: 1.5rem;" id="scan-violence-icon">⚠️</span>
+                <div>
+                  <div style="font-weight: 700; font-size: 1.1rem;" id="scan-violence-label">Violence</div>
+                  <small style="color: var(--text-muted);">ML classifier confidence</small>
+                </div>
+              </div>
+              <div style="font-size: 2rem; font-weight: 800;" id="scan-violence-score">—</div>
+              <div
+                style="background: var(--bg-primary); border-radius: 4px; height: 8px; overflow: hidden; margin-top: 0.5rem;">
+                <div id="scan-violence-bar"
+                  style="width: 0%; height: 100%; border-radius: 4px; transition: width 0.5s;"></div>
+              </div>
+            </div>
+
+            <!-- Seat Violations Card -->
+            <div class="card" id="scan-seat-card">
+              <div class="flex items-center" style="gap: 0.75rem; margin-bottom: 0.75rem;">
+                <span style="font-size: 1.5rem;">💺</span>
+                <div>
+                  <div style="font-weight: 700; font-size: 1.1rem;">Seat Violations</div>
+                  <small style="color: var(--text-muted);">Males detected in reserved seats</small>
+                </div>
+              </div>
+              <div style="font-size: 2rem; font-weight: 800;" id="scan-seat-count">—</div>
+            </div>
+          </div>
+
+          <div class="grid grid-2" style="margin-bottom: 1rem;">
+            <!-- People Count Card -->
+            <div class="card">
+              <div class="flex items-center" style="gap: 0.75rem; margin-bottom: 0.75rem;">
+                <span style="font-size: 1.5rem;">👥</span>
+                <div>
+                  <div style="font-weight: 700; font-size: 1.1rem;">People Detected</div>
+                  <small style="color: var(--text-muted);">YOLO person detection</small>
+                </div>
+              </div>
+              <div style="display: flex; gap: 1.5rem; align-items: baseline;">
+                <div><span style="font-size: 2rem; font-weight: 800;" id="scan-people-max">—</span>
+                  <small style="color: var(--text-muted);"> max</small>
+                </div>
+                <div><span style="font-size: 1.2rem; font-weight: 600;" id="scan-people-avg">—</span>
+                  <small style="color: var(--text-muted);"> avg</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Gender Breakdown Card -->
+            <div class="card">
+              <div class="flex items-center" style="gap: 0.75rem; margin-bottom: 0.75rem;">
+                <span style="font-size: 1.5rem;">🧑‍🤝‍🧑</span>
+                <div>
+                  <div style="font-weight: 700; font-size: 1.1rem;">Gender Breakdown</div>
+                  <small style="color: var(--text-muted);">DeepFace classification</small>
+                </div>
+              </div>
+              <div id="scan-gender" style="display: flex; gap: 1rem; flex-wrap: wrap;">—</div>
+            </div>
+          </div>
+
+          <!-- Summary -->
+          <div class="card">
+            <div class="flex items-center" style="gap: 0.75rem; margin-bottom: 0.5rem;">
+              <span style="font-size: 1.2rem;">📋</span>
+              <div style="font-weight: 700;">Analysis Summary</div>
+            </div>
+            <p id="scan-summary" style="color: var(--text-muted); margin: 0;">—</p>
+            <small id="scan-meta" style="color: var(--text-muted); display: block; margin-top: 0.5rem;">—</small>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Trust View -->
+      <section id="view-trust" class="view-section hidden">
+        <header class="flex justify-between items-center mb-4">
+          <h2>Trust Matrix / Reliability Scores</h2>
+          <button class="btn btn-sm btn-outline" onclick="App.loadTrust()">Refresh Matrix</button>
+        </header>
+        <div class="card table-container" id="trust-table">
+          <!-- Table injected here -->
+          <div class="text-center" style="padding: 2rem;">Loading matrix data...</div>
+        </div>
+      </section>
+
+      <!-- Live Feed View -->
+      <section id="view-live" class="view-section hidden">
+        <header class="flex justify-between items-center mb-4">
+          <h2>📹 Live Detection Feed</h2>
+          <div class="flex items-center" style="gap: 0.75rem;">
+            <div class="badge badge-safe" id="feed-status">Stopped</div>
+          </div>
+        </header>
+
+        <div class="card" style="margin-bottom: 1rem; padding: 1rem 1.5rem;">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center" style="gap: 1rem;">
+              <div class="form-group" style="margin:0">
+                <label style="margin-bottom:0.25rem">Source</label>
+                <select id="stream-source" style="width: auto; min-width: 200px;">
+                  <option value="0">Webcam (0)</option>
+                  <option value="1">Webcam (1)</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0">
+                <label style="margin-bottom:0.25rem">Custom RTSP / File</label>
+                <input id="stream-custom" placeholder="rtsp://... or path/to/video.mp4" style="width: 300px;">
+              </div>
+            </div>
+            <div class="flex" style="gap: 0.5rem;">
+              <button class="btn btn-primary btn-sm" onclick="App.startStream()">▶ Start</button>
+              <button class="btn btn-outline btn-sm" onclick="App.stopStream()">⏹ Stop</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="padding: 0; overflow: hidden; text-align: center; background: #000;">
+          <img id="live-feed" style="width: 100%; max-height: 70vh; display: none;" />
+          <div id="feed-placeholder" style="padding: 4rem; color: var(--text-muted);">
+            <p style="font-size: 1.5rem;">📹</p>
+            <p>Select a source and press Start to begin live detection</p>
+            <small>🟢 Green boxes = Person &nbsp; 🟦 Cyan = Reserved seat ROI</small>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+
+</html>
