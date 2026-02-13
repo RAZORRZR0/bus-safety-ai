@@ -469,6 +469,32 @@ const App = {
     },
 
     // --- Live Stream ---
+    async uploadStreamFile() {
+        const fileInput = document.getElementById('stream-upload-input');
+        const customInput = document.getElementById('stream-custom');
+        if (!fileInput || !fileInput.files.length) return;
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        try {
+            this.toast('Uploading file for stream...', 'safe');
+            const res = await fetch('/stream/upload', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${this.state.token}` },
+                body: formData,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Upload failed');
+
+            customInput.value = data.path;
+            this.toast('File uploaded! Press Start to stream.', 'success');
+        } catch (e) {
+            console.error(e);
+            this.toast('Upload failed: ' + e.message, 'error');
+        }
+    },
+
     startStream() {
         const custom = document.getElementById('stream-custom').value.trim();
         const source = custom || document.getElementById('stream-source').value;

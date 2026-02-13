@@ -160,11 +160,11 @@
           </div>
           <div class="flex items-center" style="gap: 0.75rem;">
             <select id="model-select" style="width: auto; min-width: 160px;">
-              <option value="yolov8n.pt">YOLOv8n (Nano — Fast)</option>
-              <option value="yolov8s.pt">YOLOv8s (Small)</option>
-              <option value="yolov8m.pt" selected>YOLOv8m (Medium — Balanced)</option>
-              <option value="yolov8l.pt">YOLOv8l (Large)</option>
-              <option value="yolov8x.pt">YOLOv8x (XLarge — Best)</option>
+              <option value="yolo26n.pt">YOLO26n (Nano — Fast)</option>
+              <option value="yolo26s.pt">YOLO26s (Small)</option>
+              <option value="yolo26m.pt" selected>YOLO26m (Medium — Balanced)</option>
+              <option value="yolo26l.pt">YOLO26l (Large)</option>
+              <option value="yolo26x.pt">YOLO26x (XLarge — Best)</option>
             </select>
             <button class="btn btn-primary btn-sm" onclick="App.switchModel()">Switch</button>
           </div>
@@ -345,8 +345,15 @@
                 </select>
               </div>
               <div class="form-group" style="margin:0">
-                <label style="margin-bottom:0.25rem">Custom RTSP / File</label>
-                <input id="stream-custom" placeholder="rtsp://... or path/to/video.mp4" style="width: 300px;">
+                <label style="margin-bottom:0.25rem">Custom RTSP / File / Upload</label>
+                <div class="flex" style="gap: 0.5rem;">
+                  <input id="stream-custom" placeholder="rtsp://... or path/to/video.mp4" style="width: 240px;">
+                  <button class="btn btn-outline btn-sm"
+                    onclick="document.getElementById('stream-upload-input').click()"
+                    title="Upload local video to stream">📂</button>
+                  <input type="file" id="stream-upload-input" accept="video/*" style="display:none"
+                    onchange="App.uploadStreamFile()">
+                </div>
               </div>
             </div>
             <div class="flex" style="gap: 0.5rem;">
@@ -369,7 +376,7 @@
     </main>
   </div>
 
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/app.js?v=3"></script>
 </body>
 
 </html>

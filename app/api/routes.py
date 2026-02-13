@@ -163,6 +163,23 @@ async def scan_video(
         os.unlink(tmp_path)
 
 
+
+@router.post("/stream/upload")
+async def upload_stream_file(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+):
+    """Upload a file to be used as a stream source."""
+    suffix = Path(file.filename or "stream.mp4").suffix or ".mp4"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        data = await file.read()
+        tmp.write(data)
+        tmp_path = tmp.name
+    
+    logger.info("Stream file uploaded: %s", tmp_path)
+    return {"path": tmp_path, "filename": file.filename}
+
+
 @router.get("/stream/live")
 def stream_live(source: str = "0"):
     """MJPEG stream with YOLO annotations. source=0 for webcam, or a file/RTSP path."""
@@ -188,7 +205,14 @@ def stream_live(source: str = "0"):
             while True:
                 ok, frame = cap.read()
                 if not ok:
-                    break
+                    # If this is a file (string source), loop it
+                    if isinstance(cam_source, str):
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ok, frame = cap.read()
+                    
+                    # If still not ok (e.g. webcam disconnect or empty file), exit
+                    if not ok:
+                        break
                 
                 # Maintain rolling buffer
                 frame_buffer.append(frame)

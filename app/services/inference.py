@@ -61,7 +61,9 @@ class FrameAnalysis:
     people_count: int
 
 
-AVAILABLE_MODELS = ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt"]
+AVAILABLE_MODELS = [
+    "yolo26n.pt", "yolo26s.pt", "yolo26m.pt", "yolo26l.pt", "yolo26x.pt",
+]
 
 
 class InferenceService:
@@ -124,6 +126,37 @@ class InferenceService:
             return 0 if boxes is None else int(len(boxes))
         except Exception:
             return 0
+
+    def _detect_persons_tracked(self, frame: np.ndarray):
+        """Use model.track() for temporally consistent detections across frames.
+        Returns the results object with tracked bounding boxes (includes IDs)."""
+        if self._model is None:
+            return None
+        try:
+            results = self._model.track(
+                source=frame,
+                conf=settings.yolo_conf_threshold,
+                classes=[0],
+                persist=True,
+                tracker="bytetrack.yaml",
+                verbose=False,
+            )
+            if not results:
+                return None
+            return results[0]
+        except Exception as e:
+            logger.warning("Tracking failed, falling back to predict: %s", e)
+            # Fallback to predict if tracking fails
+            try:
+                results = self._model.predict(
+                    source=frame,
+                    conf=settings.yolo_conf_threshold,
+                    classes=[0],
+                    verbose=False,
+                )
+                return results[0] if results else None
+            except Exception:
+                return None
 
     def _estimate_aggression(self, current: np.ndarray, previous: np.ndarray | None) -> float:
         """Fallback motion-heuristic aggression estimator."""
@@ -318,17 +351,16 @@ class InferenceService:
 
         if self._model is not None:
             try:
-                results = self._model.predict(
-                    source=resized,
-                    conf=settings.yolo_conf_threshold,
-                    classes=[0],
-                    verbose=False,
-                )
-                if results and results[0].boxes is not None:
-                    people_count = len(results[0].boxes)
-                    for box in results[0].boxes:
+                # Use tracking for temporally consistent detections
+                result = self._detect_persons_tracked(resized)
+                if result is not None and result.boxes is not None:
+                    people_count = len(result.boxes)
+                    # Get track IDs if available
+                    track_ids = result.boxes.id
+                    for i, box in enumerate(result.boxes):
                         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                         conf = float(box.conf[0])
+                        tid = int(track_ids[i]) if track_ids is not None else None
 
                         # Crop person for gender classification
                         crop = resized[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
@@ -338,24 +370,27 @@ class InferenceService:
 
                         in_roi = self._box_in_roi(x1, y1, x2, y2, roi_x1, roi_y1, roi_x2, roi_y2)
 
+                        # Track ID prefix
+                        id_tag = f"#{tid} " if tid is not None else ""
+
                         # Color coding
                         if gender == "Male" and in_roi:
                             color = (0, 0, 255)       # RED — violation
-                            label = f"MALE {conf:.0%} [VIOLATION]"
+                            label = f"{id_tag}MALE {conf:.0%} [VIOLATION]"
                             violations += 1
                         elif gender == "Male":
                             color = (255, 128, 0)     # BLUE-ish — male outside ROI
-                            label = f"Male {conf:.0%}"
+                            label = f"{id_tag}Male {conf:.0%}"
                         elif gender == "Female":
                             color = (255, 0, 255)     # PINK
-                            label = f"Female {conf:.0%}"
+                            label = f"{id_tag}Female {conf:.0%}"
                         else:
                             if in_roi:
                                 color = (0, 165, 255) # ORANGE — unknown in ROI
-                                label = f"Occupant {conf:.0%} [CHECK]"
+                                label = f"{id_tag}Occupant {conf:.0%} [CHECK]"
                             else:
                                 color = (128, 128, 128)  # GRAY
-                                label = f"Person {conf:.0%}"
+                                label = f"{id_tag}Person {conf:.0%}"
 
                         # Draw bounding box
                         thickness = 3 if (gender == "Male" and in_roi) else 2

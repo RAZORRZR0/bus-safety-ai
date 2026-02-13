@@ -3,3 +3,7 @@ __pycache__/
 transport.db
 evidence/
 .venv/
+yolo26m.pt
+yolo26x.pt
+yolov8m.pt
+yolov8x.pt

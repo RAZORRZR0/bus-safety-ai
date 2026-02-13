@@ -7,7 +7,7 @@ class Settings(BaseModel):
     jwt_algorithm: str = "HS256"
     token_exp_minutes: int = 120
     db_url: str = "sqlite:///transport.db"
-    yolo_model_path: str = "yolov8m.pt"
+    yolo_model_path: str = "yolo26m.pt"
     yolo_conf_threshold: float = 0.5
     # Reserved seat ROI as fractions of frame dimensions (0.0 - 1.0)
     roi_x1: float = 0.0
