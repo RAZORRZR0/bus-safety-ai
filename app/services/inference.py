@@ -282,21 +282,56 @@ class InferenceService:
         return FrameAnalysis(payload=payload, people_count=people_count)
 
     def _classify_gender(self, crop_bgr: np.ndarray) -> str:
-        """Classify gender of a person crop. Returns 'Male', 'Female', or 'Unknown'."""
+        """Classify gender of a person crop using face detection on the head region.
+        Returns 'Male', 'Female', or 'Unknown'."""
         try:
             from deepface import DeepFace
-            result = DeepFace.analyze(
-                crop_bgr,
-                actions=["gender"],
-                enforce_detection=False,
-                silent=True,
-                detector_backend="skip",  # skip face detection, analyze the full crop
-            )
-            if isinstance(result, list):
-                result = result[0]
-            dominant = result.get("dominant_gender", "Unknown")
+
+            h_crop, w_crop = crop_bgr.shape[:2]
+            if h_crop < 30 or w_crop < 20:
+                return "Unknown"
+
+            # Extract the upper 40% of the person bounding box (head/face region)
+            head_region = crop_bgr[0:int(h_crop * 0.4), :]
+
+            # Attempt 1: Use face detection on head region (most accurate)
+            try:
+                result = DeepFace.analyze(
+                    head_region,
+                    actions=["gender"],
+                    enforce_detection=True,
+                    silent=True,
+                    detector_backend="opencv",
+                )
+                if isinstance(result, list):
+                    result = result[0]
+            except (ValueError, Exception):
+                # Face not detected in head crop — fallback to head crop without detection
+                try:
+                    result = DeepFace.analyze(
+                        head_region,
+                        actions=["gender"],
+                        enforce_detection=False,
+                        silent=True,
+                        detector_backend="skip",
+                    )
+                    if isinstance(result, list):
+                        result = result[0]
+                except Exception:
+                    return "Unknown"
+
             gender_scores = result.get("gender", {})
+            dominant = result.get("dominant_gender", "Unknown")
             logger.debug("  Gender result: dominant=%s scores=%s", dominant, gender_scores)
+
+            # Apply confidence threshold — only trust strong predictions
+            man_score = gender_scores.get("Man", 0)
+            woman_score = gender_scores.get("Woman", 0)
+            confidence = max(man_score, woman_score)
+
+            if confidence < 65:  # Below 65% confidence → unreliable
+                return "Unknown"
+
             if dominant == "Man":
                 return "Male"
             elif dominant == "Woman":
@@ -496,7 +531,7 @@ class InferenceService:
         # Analyze a subset of frames for people/seat violations
         analysis_frames = sampled_frames[::max(1, len(sampled_frames) // 4)]  # ~4 frames
         total_people = 0
-        total_violations = 0
+        max_violations = 0
         gender_counts = {"Male": 0, "Female": 0, "Unknown": 0}
         max_people_in_frame = 0
 
@@ -521,24 +556,37 @@ class InferenceService:
                 total_people += frame_people
                 max_people_in_frame = max(max_people_in_frame, frame_people)
 
+                frame_genders = {"Male": 0, "Female": 0, "Unknown": 0}
+                frame_violations = 0
+
                 for box in results[0].boxes:
                     bx1, by1, bx2, by2 = map(int, box.xyxy[0].tolist())
                     crop = resized[max(0, by1):min(h, by2), max(0, bx1):min(w_target, bx2)]
                     gender = "Unknown"
                     if crop.size > 0 and crop.shape[0] > 20 and crop.shape[1] > 20:
                         gender = self._classify_gender(crop)
-                    gender_counts[gender] = gender_counts.get(gender, 0) + 1
+                    frame_genders[gender] = frame_genders.get(gender, 0) + 1
                     in_roi = self._box_in_roi(bx1, by1, bx2, by2, roi_x1, roi_y1, roi_x2, roi_y2)
                     if gender == "Male" and in_roi:
-                        total_violations += 1
+                        frame_violations += 1
+                        
+                for g in frame_genders:
+                    gender_counts[g] = max(gender_counts.get(g, 0), frame_genders[g])
+                max_violations = max(max_violations, frame_violations)
             except Exception as e:
                 logger.warning("YOLO error in unified analysis: %s", e)
 
         n_analysis = max(len(analysis_frames), 1)
         avg_people = total_people / n_analysis
 
+        # Sanity: total genders should never exceed max people in any frame
+        total_gender = sum(gender_counts.values())
+        if total_gender > max_people_in_frame and max_people_in_frame > 0:
+            scale = max_people_in_frame / total_gender
+            gender_counts = {k: max(0, round(v * scale)) for k, v in gender_counts.items()}
+
         # ── Severity calculation ──
-        seat_misuse = total_violations > 0
+        seat_misuse = max_violations > 0
         if violence_detected and violence_score >= 0.9:
             severity = "critical"
         elif violence_detected or (seat_misuse and violence_score >= 0.5):
@@ -551,7 +599,7 @@ class InferenceService:
         # ── Summary ──
         summary_parts = []
         if seat_misuse:
-            summary_parts.append(f"Reserved seat violation ({total_violations} instances)")
+            summary_parts.append(f"Reserved seat violation ({max_violations} instances)")
         if violence_detected:
             summary_parts.append(f"Violence detected (confidence={violence_score:.2f})")
         if not summary_parts:
@@ -562,7 +610,7 @@ class InferenceService:
             "violence_score": round(violence_score, 4),
             "violence_threshold": settings.violence_threshold,
             "seat_misuse": seat_misuse,
-            "seat_violations": total_violations,
+            "seat_violations": max_violations,
             "people_count_avg": round(avg_people, 1),
             "people_count_max": max_people_in_frame,
             "gender_breakdown": gender_counts,

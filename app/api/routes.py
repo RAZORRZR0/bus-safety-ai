@@ -22,6 +22,7 @@ from app.core.security import (
 from app.models.domain import (
     Alert,
     EventIngestRequest,
+    FeedbackSubmitRequest,
     LoginRequest,
     RegisterRequest,
     TrustScore,
@@ -37,11 +38,14 @@ from app.services.inference import InferenceService
 from app.services.trust import apply_trust_impact
 from app.storage.db import get_session
 
+from app.services.feedback import FeedbackService
+
 logger = logging.getLogger("transport")
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 router = APIRouter()
 inference_service = InferenceService()
+feedback_service = FeedbackService()
 
 
 def _extract_token(auth_header: str | None) -> str:
@@ -146,21 +150,27 @@ async def scan_video(
     YOLO people detection, gender/seat violations, violence classification.
     """
     logger.info("POST /scan/video  filename=%s", file.filename)
+    from app.services.evidence import hash_bytes, EVIDENCE_DIR
+    
     suffix = Path(file.filename or "clip.mp4").suffix or ".mp4"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        data = await file.read()
-        tmp.write(data)
-        tmp_path = tmp.name
+    data = await file.read()
+    digest = hash_bytes(data)
+    
+    # Save as manual scan evidence in case we receive feedback
+    filename = f"manual_{digest[:12]}{suffix}"
+    dest_path = EVIDENCE_DIR / filename
+    dest_path.write_bytes(data)
+    
     try:
-        result = inference_service.analyze_video_unified(tmp_path)
+        result = inference_service.analyze_video_unified(str(dest_path))
+        result["reference_id"] = filename
         logger.info("Unified scan result: %s", result)
         return result
     except Exception as e:
         logger.exception("Unified scan FAILED")
+        if dest_path.exists():
+            dest_path.unlink()
         raise HTTPException(500, str(e))
-    finally:
-        import os
-        os.unlink(tmp_path)
 
 
 
@@ -503,3 +513,15 @@ def audit_chain_status(
         return {"exists": False, "entries": 0}
     lines = CHAIN_FILE.read_text(encoding="utf-8").strip().splitlines()
     return {"exists": True, "entries": len(lines)}
+
+
+@router.post("/feedback")
+def submit_feedback(
+    payload: FeedbackSubmitRequest,
+    session: Annotated[Session, Depends(get_session)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Submit feedback to improve ML model accuracy and collect hard examples."""
+    feedback = feedback_service.process_feedback(payload, user.username, session)
+    return {"status": "success", "feedback_id": feedback.id}
+

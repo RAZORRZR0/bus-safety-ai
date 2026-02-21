@@ -39,6 +39,7 @@ NOVIOLENCE_DIR = DATA_DIR / "NoViolence"
 TRAIN_TXT = DATA_DIR / "train.txt"
 TEST_TXT = DATA_DIR / "test.txt"
 MODEL_OUT = Path("models/violence_classifier.pth")
+FEEDBACK_DIR = Path("dataset/feedback")
 
 FRAMES_PER_CLIP = 16       # number of frames to sample per video
 IMG_SIZE = 112             # resize frames to 112x112
@@ -52,7 +53,7 @@ SEED = 42
 class ViolenceDataset(Dataset):
     """Loads mp4 clips, samples FRAMES_PER_CLIP frames, returns (tensor, label)."""
 
-    def __init__(self, file_list: list[str], transform=None):
+    def __init__(self, file_list: list[str], transform=None, include_feedback: bool = False):
         self.samples: list[tuple[Path, int]] = []
         self.transform = transform
 
@@ -71,6 +72,15 @@ class ViolenceDataset(Dataset):
                 continue
             if path.exists():
                 self.samples.append((path, label))
+
+        # Include hard examples from the feedback loop
+        if include_feedback and FEEDBACK_DIR.exists():
+            for p in (FEEDBACK_DIR / "Violence").glob("*"):
+                if p.is_file():
+                    self.samples.append((p, 1))
+            for p in (FEEDBACK_DIR / "NoViolence").glob("*"):
+                if p.is_file():
+                    self.samples.append((p, 0))
 
         logger.info("Dataset: %d clips (Violence: %d, NonViolence: %d)",
                     len(self.samples),
@@ -181,8 +191,8 @@ def main():
     # Datasets
     train_files = load_split(TRAIN_TXT)
     test_files = load_split(TEST_TXT)
-    train_ds = ViolenceDataset(train_files, transform=train_transform)
-    test_ds = ViolenceDataset(test_files, transform=test_transform)
+    train_ds = ViolenceDataset(train_files, transform=train_transform, include_feedback=True)
+    test_ds = ViolenceDataset(test_files, transform=test_transform, include_feedback=False)
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
                               num_workers=0, pin_memory=False)

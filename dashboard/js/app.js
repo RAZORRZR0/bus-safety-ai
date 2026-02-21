@@ -95,6 +95,7 @@ const App = {
             this.setupRouter();
             this.startPolling();
             this.setupROI();
+            this.initMdSelects();
         }
     },
 
@@ -143,23 +144,31 @@ const App = {
         try {
             const alerts = await this.api('/alerts');
             container.innerHTML = alerts.map(a => `
-                <div class="card flex justify-between items-center" style="margin-bottom: 0.5rem; padding: 1rem;">
+                <div class="card card-outlined flex justify-between items-center" style="margin-bottom: 0.5rem; padding: 0.875rem 1rem;">
                     <div>
                         <div class="flex items-center gap-2">
                             <span class="badge badge-${this.getSeverityClass(a.severity)}">${a.severity}</span>
-                            <span style="font-weight: 500;">Bus ${a.bus_id}</span>
+                            <span style="font-weight: 500; font-size:0.875rem;">Bus ${a.bus_id}</span>
                             <small>${new Date(a.created_at).toLocaleTimeString()}</small>
                         </div>
-                        <div style="margin-top:0.25rem; font-size: 0.9rem; color: var(--text-muted)">Route: ${a.route_id} | Status: ${a.status}</div>
+                        <div style="margin-top:0.25rem; font-size: 0.8125rem; color: var(--md-on-surface-variant)">Route: ${a.route_id} | Status: ${a.status}</div>
                     </div>
-                    ${a.status !== 'acknowledged' ? `<button onclick="App.ackAlert(${a.id})" class="btn btn-sm btn-outline">Ack</button>` : '<i style="color:var(--safe)">✓</i>'}
+                    <div class="flex gap-2">
+                        <button class="btn btn-sm btn-outline" style="padding: 0 0.5rem;" title="Mark True Positive" onclick="App.submitFeedback('${a.violation_event_id}', true, 'alert_violence_true')">
+                            <span class="material-symbols-outlined" style="font-size:16px; color:#22c55e">thumb_up</span>
+                        </button>
+                        <button class="btn btn-sm btn-outline" style="padding: 0 0.5rem;" title="Mark False Positive" onclick="App.submitFeedback('${a.violation_event_id}', false, 'alert_violence_false')">
+                            <span class="material-symbols-outlined" style="font-size:16px; color:#ef4444">thumb_down</span>
+                        </button>
+                        ${a.status !== 'acknowledged' ? `<button onclick="App.ackAlert(${a.id})" class="btn btn-sm btn-outline">Ack</button>` : '<span class="material-symbols-outlined" style="color:var(--md-safe); font-size:20px">check_circle</span>'}
+                    </div>
                 </div>
             `).join('');
 
             // Update Stats
             document.getElementById('stat-alerts').innerText = alerts.filter(a => a.status === 'open').length;
         } catch (e) {
-            container.innerHTML = `<div class="text-center text-muted">Failed to load alerts</div>`;
+            container.innerHTML = `<div class="text-center text-muted"><span class="material-symbols-outlined" style="font-size:32px; opacity:0.3; display:block; margin-bottom:0.5rem">error_outline</span>Failed to load alerts</div>`;
         }
     },
 
@@ -260,9 +269,12 @@ const App = {
         }
     },
 
+    currentScanRefId: null,
+
     _renderScanResults(data) {
         const resultsDiv = document.getElementById('scan-results');
         resultsDiv.classList.remove('hidden');
+        this.currentScanRefId = data.reference_id;
 
         // Severity banner
         const banner = document.getElementById('scan-severity-banner');
@@ -285,7 +297,9 @@ const App = {
         document.getElementById('scan-violence-score').style.color = vColor;
         document.getElementById('scan-violence-bar').style.width = `${vScore}%`;
         document.getElementById('scan-violence-bar').style.background = vColor;
-        document.getElementById('scan-violence-icon').textContent = data.violence ? '🔴' : '🟢';
+        const iconEl = document.getElementById('scan-violence-icon');
+        iconEl.textContent = data.violence ? 'dangerous' : 'verified_user';
+        iconEl.style.color = vColor;
         document.getElementById('scan-violence-label').textContent = data.violence ? 'Violence Detected' : 'No Violence';
 
         // Seat violations
@@ -323,7 +337,10 @@ const App = {
                     ? `Active: ${data.current_model} ✅`
                     : `${data.current_model} (not loaded) ⚠️`;
             }
-            if (selectEl) selectEl.value = data.current_model;
+            if (selectEl) {
+                selectEl.value = data.current_model;
+                this.syncMdSelect(selectEl);
+            }
         } catch (e) { }
         this.loadROI();
     },
@@ -537,18 +554,70 @@ const App = {
     },
 
     toast(msg, type = 'safe') {
-        const t = document.createElement('div');
-        t.className = `btn btn-primary badge-${type}`;
-        t.style.position = 'fixed';
-        t.style.bottom = '20px';
-        t.style.right = '20px';
-        t.style.zIndex = 1000;
-        t.innerText = msg;
-        document.body.appendChild(t);
-        setTimeout(() => t.remove(), 3000);
+        // Remove any existing snackbar
+        const existing = document.querySelector('.snackbar');
+        if (existing) existing.remove();
+
+        const snackbar = document.createElement('div');
+        let typeClass = '';
+        if (type === 'error' || type === 'danger') typeClass = 'snackbar-error';
+        else if (type === 'success') typeClass = 'snackbar-success';
+        snackbar.className = `snackbar ${typeClass}`;
+
+        // Icon
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-outlined';
+        icon.style.fontSize = '20px';
+        if (type === 'error' || type === 'danger') icon.textContent = 'error';
+        else if (type === 'success') icon.textContent = 'check_circle';
+        else icon.textContent = 'info';
+        snackbar.appendChild(icon);
+
+        const text = document.createElement('span');
+        text.textContent = msg;
+        snackbar.appendChild(text);
+
+        document.body.appendChild(snackbar);
+        // Trigger reflow then animate in
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => snackbar.classList.add('visible'));
+        });
+        setTimeout(() => {
+            snackbar.classList.remove('visible');
+            setTimeout(() => snackbar.remove(), 300);
+        }, 3000);
     },
 
 
+
+    async submitFeedback(refIdOrAction, isCorrect = null, type = null) {
+        try {
+            // Support both manual scan feedback and alert feedback
+            let refId = refIdOrAction;
+            let finalType = type;
+            let finalIsCorrect = isCorrect;
+
+            if (isCorrect === null) {
+                if (!this.currentScanRefId) {
+                    return this.toast('No active scan to provide feedback for.', 'error');
+                }
+                refId = this.currentScanRefId;
+                finalIsCorrect = refIdOrAction === 'correct_violence';
+                finalType = refIdOrAction;
+            }
+
+            const payload = {
+                event_reference_id: String(refId),
+                feedback_type: finalType,
+                is_correct: finalIsCorrect
+            };
+
+            await this.api('/feedback', 'POST', payload);
+            this.toast('Feedback submitted. Thanks for improving the model!', 'success');
+        } catch (e) {
+            console.error(e);
+        }
+    },
 
     startPolling() {
         if (this.state.refreshInterval) clearInterval(this.state.refreshInterval);
@@ -560,4 +629,65 @@ const App = {
 };
 
 window.App = App;
-window.onload = () => App.init();
+window.onload = () => {
+    App.initMdSelects(); // Init custom dropdowns for auth view too
+    App.init();
+};
+
+/* ── Custom Material Select Dropdown Logic ──────────────── */
+App.initMdSelects = function () {
+    document.querySelectorAll('.md-select').forEach(wrapper => {
+        const trigger = wrapper.querySelector('.md-select-trigger');
+        const menu = wrapper.querySelector('.md-select-menu');
+        const valueSpan = wrapper.querySelector('.md-select-value');
+        const hiddenSelect = wrapper.querySelector('select');
+        if (!trigger || !menu || !hiddenSelect) return;
+
+        // Toggle menu on trigger click
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Close all other open dropdowns first
+            document.querySelectorAll('.md-select.open').forEach(other => {
+                if (other !== wrapper) other.classList.remove('open');
+            });
+            wrapper.classList.toggle('open');
+        });
+
+        // Option click
+        menu.querySelectorAll('.md-select-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const val = opt.dataset.value;
+                // Update hidden select
+                hiddenSelect.value = val;
+                // Update display
+                valueSpan.textContent = opt.textContent;
+                // Update active state
+                menu.querySelectorAll('.md-select-option').forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                // Close
+                wrapper.classList.remove('open');
+            });
+        });
+    });
+
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.md-select.open').forEach(w => w.classList.remove('open'));
+    });
+};
+
+// Sync a custom dropdown UI when native select value changes programmatically
+App.syncMdSelect = function (selectEl) {
+    const wrapper = selectEl.closest('.md-select');
+    if (!wrapper) return;
+    const val = selectEl.value;
+    const valueSpan = wrapper.querySelector('.md-select-value');
+    const menu = wrapper.querySelector('.md-select-menu');
+    if (!menu) return;
+    menu.querySelectorAll('.md-select-option').forEach(opt => {
+        const isActive = opt.dataset.value === val;
+        opt.classList.toggle('active', isActive);
+        if (isActive && valueSpan) valueSpan.textContent = opt.textContent;
+    });
+};

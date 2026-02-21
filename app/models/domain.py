@@ -78,3 +78,21 @@ class EventIngestRequest(BaseModel):
     special_category_present: bool
     aggression_score: float
     model_confidence: float = 0.9
+
+
+class Feedback(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_reference_id: str = Field(index=True)
+    feedback_type: str = Field(index=True)  # e.g., "violence_false_positive", "seat_false_positive"
+    is_correct: bool = Field(index=True)
+    comments: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now, index=True)
+    created_by: str = Field(index=True)
+
+
+class FeedbackSubmitRequest(BaseModel):
+    event_reference_id: str
+    feedback_type: str
+    is_correct: bool
+    comments: Optional[str] = None
+
