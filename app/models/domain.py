@@ -9,6 +9,41 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Bus(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bus_id: str = Field(index=True, unique=True)
+    route_id: str = Field(index=True)
+    capacity: int
+    model: str
+    year: int
+    last_maintenance: datetime = Field(default_factory=utc_now)
+
+
+class Route(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    route_id: str = Field(index=True, unique=True)
+    name: str
+    start_location: str
+    end_location: str
+    distance_km: float
+
+
+class BusCreate(BaseModel):
+    bus_id: str
+    route_id: str
+    capacity: int
+    model: str
+    year: int
+
+
+class RouteCreate(BaseModel):
+    route_id: str
+    name: str
+    start_location: str
+    end_location: str
+    distance_km: float
+
+
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)

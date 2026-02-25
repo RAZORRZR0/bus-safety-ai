@@ -6,7 +6,7 @@ from typing import Annotated
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Body, Depends, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 
@@ -21,10 +21,14 @@ from app.core.security import (
 )
 from app.models.domain import (
     Alert,
+    Bus,
+    BusCreate,
     EventIngestRequest,
     FeedbackSubmitRequest,
     LoginRequest,
     RegisterRequest,
+    Route,
+    RouteCreate,
     TrustScore,
     User,
     Verify2FARequest,
@@ -144,31 +148,73 @@ def set_roi(payload: dict = Body(...), _: User = Depends(get_current_user)):
 @router.post("/scan/video")
 async def scan_video(
     file: UploadFile = File(...),
-    _: User = Depends(get_current_user),
+    bus_id: str | None = Form(None),
+    route_id: str | None = Form(None),
+    timeslot: str | None = Form(None),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Upload a video clip and run ALL detection models:
     YOLO people detection, gender/seat violations, violence classification.
+    Optionally tag the result to a registered bus/route to update trust scores.
     """
-    logger.info("POST /scan/video  filename=%s", file.filename)
+    logger.info("POST /scan/video  filename=%s  bus=%s  route=%s", file.filename, bus_id, route_id)
     from app.services.evidence import hash_bytes, EVIDENCE_DIR
-    
+
     suffix = Path(file.filename or "clip.mp4").suffix or ".mp4"
     data = await file.read()
     digest = hash_bytes(data)
-    
+
     # Save as manual scan evidence in case we receive feedback
     filename = f"manual_{digest[:12]}{suffix}"
     dest_path = EVIDENCE_DIR / filename
     dest_path.write_bytes(data)
-    
+
     try:
         result = inference_service.analyze_video_unified(str(dest_path))
         result["reference_id"] = filename
+        result["bus_id"] = bus_id
+        result["route_id"] = route_id
+        result["timeslot"] = timeslot
+
+        # ── Create ViolationEvent + update trust if fleet context provided ──
+        if bus_id and route_id and timeslot:
+            event = ViolationEvent(
+                bus_id=bus_id,
+                route_id=route_id,
+                timeslot=timeslot,
+                seat_misuse=bool(result.get("seat_violations", 0) > 0),
+                violence=bool(result.get("violence", False)),
+                people_count=int(result.get("people_count_max", 0)),
+                aggression_score=float(result.get("violence_score", 0.0)),
+                severity=result.get("severity", "low"),
+                summary=result.get("summary", "Manual video scan"),
+                evidence_hash=digest,
+            )
+            session.add(event)
+            session.commit()
+            session.refresh(event)
+
+            # Create alert if warranted
+            alert = create_alert(session, event)
+            apply_trust_impact(session, event)
+            append_audit("scan_event", {
+                "event_id": event.id,
+                "bus_id": bus_id,
+                "route_id": route_id,
+                "severity": event.severity,
+            })
+
+            result["event_id"] = event.id
+            result["alert_id"] = alert.id if alert else None
+            logger.info("Scan created event #%d  alert=%s", event.id, alert.id if alert else None)
+
         logger.info("Unified scan result: %s", result)
         return result
     except Exception as e:
         logger.exception("Unified scan FAILED")
         if dest_path.exists():
+
             dest_path.unlink()
         raise HTTPException(500, str(e))
 
@@ -525,3 +571,78 @@ def submit_feedback(
     feedback = feedback_service.process_feedback(payload, user.username, session)
     return {"status": "success", "feedback_id": feedback.id}
 
+
+# ── Fleet management ─────────────────────────────────────────────────────────
+
+@router.get("/fleet/buses")
+def list_buses(
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    return session.exec(select(Bus).order_by(Bus.bus_id)).all()
+
+
+@router.post("/fleet/buses", status_code=201)
+def create_bus(
+    payload: BusCreate,
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    existing = session.exec(select(Bus).where(Bus.bus_id == payload.bus_id)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Bus '{payload.bus_id}' already exists.")
+    bus = Bus(**payload.model_dump())
+    session.add(bus)
+    session.commit()
+    session.refresh(bus)
+    return bus
+
+
+@router.delete("/fleet/buses/{bus_id}", status_code=204)
+def delete_bus(
+    bus_id: str,
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    bus = session.exec(select(Bus).where(Bus.bus_id == bus_id)).first()
+    if not bus:
+        raise HTTPException(status_code=404, detail="Bus not found.")
+    session.delete(bus)
+    session.commit()
+
+
+@router.get("/fleet/routes")
+def list_routes(
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    return session.exec(select(Route).order_by(Route.route_id)).all()
+
+
+@router.post("/fleet/routes", status_code=201)
+def create_route(
+    payload: RouteCreate,
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    existing = session.exec(select(Route).where(Route.route_id == payload.route_id)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Route '{payload.route_id}' already exists.")
+    route = Route(**payload.model_dump())
+    session.add(route)
+    session.commit()
+    session.refresh(route)
+    return route
+
+
+@router.delete("/fleet/routes/{route_id}", status_code=204)
+def delete_route(
+    route_id: str,
+    session: Annotated[Session, Depends(get_session)],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    route = session.exec(select(Route).where(Route.route_id == route_id)).first()
+    if not route:
+        raise HTTPException(status_code=404, detail="Route not found.")
+    session.delete(route)
+    session.commit()

@@ -29,7 +29,11 @@ const App = {
 
             if (!res.ok) {
                 console.error(`[API] ${method} ${endpoint} → ${res.status}`, data);
-                if (res.status === 401 && token) this.logout();
+                if (res.status === 401 && token) {
+                    this.toast('Session expired — please log in again.', 'error');
+                    this.logout();
+                    return;
+                }
                 throw new Error(data.detail || data || 'API Error');
             }
             console.log(`[API] ${method} ${endpoint} → 200`, data);
@@ -131,9 +135,10 @@ const App = {
         if (activeView) activeView.classList.remove('hidden');
 
         // Refresh Data
-        if (hash === 'dashboard') { this.loadAlerts(); this.loadStats(); }
+        if (hash === 'dashboard') { this.loadAlerts(); }
         if (hash === 'trust') this.loadTrust();
         if (hash === 'ingest') this.loadModelStatus();
+        if (hash === 'fleet') this.loadFleet();
         if (hash !== 'live') this.stopStream();
     },
 
@@ -177,35 +182,72 @@ const App = {
         if (!container) return;
         try {
             const data = await this.api('/trust/overview');
-            container.innerHTML = `
-                <table>
-                    <tr><th>Scope</th><th>ID</th><th>Trust Score</th><th>Status</th></tr>
-                    ${data.map(t => `
-                        <tr>
-                            <td>${t.scope_type}</td>
-                            <td>${t.scope_id}</td>
-                            <td>
-                                <div class="flex items-center gap-2">
-                                    <div style="width: 50px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
-                                        <div style="width: ${Math.min(t.score, 100)}%; height: 100%; background: ${t.score > 80 ? 'var(--safe)' : t.score > 50 ? 'var(--warn)' : 'var(--danger)'}"></div>
-                                    </div>
-                                    ${t.score.toFixed(1)}
-                                </div>
-                            </td>
-                            <td>${t.score > 80 ? 'High' : t.score > 50 ? 'Medium' : 'Low'}</td>
-                        </tr>
-                    `).join('')}
-                </table>
-            `;
+
+            if (!data.length) {
+                container.innerHTML = `<div class="text-center" style="padding: 3rem;">
+                    <span class="material-symbols-outlined" style="font-size:48px; opacity:0.25; display:block; margin-bottom:0.75rem">shield</span>
+                    <p style="margin:0">No trust scores yet. Scan a video tagged to a bus to generate scores.</p>
+                </div>`;
+                return;
+            }
+
+            // Group by scope_type
+            const groups = { bus: [], route: [], timeslot: [] };
+            data.forEach(t => { (groups[t.scope_type] || (groups[t.scope_type] = [])).push(t); });
+
+            const scoreColor = s => s > 80 ? '#22c55e' : s > 50 ? '#f59e0b' : '#ef4444';
+            const scoreLabel = s => s > 80 ? 'Trusted' : s > 50 ? 'At Risk' : 'Flagged';
+            const scoreIcon = s => s > 80 ? 'verified_user' : s > 50 ? 'warning' : 'dangerous';
+
+            const renderCard = t => {
+                const color = scoreColor(t.score);
+                const pct = Math.min(t.score, 100);
+                const circumference = 2 * Math.PI * 22; // r=22
+                const dash = (pct / 100) * circumference;
+                return `
+                <div style="display:flex; flex-direction:column; align-items:center; gap:0.4rem; padding:0.75rem 1rem;
+                            background:var(--md-surface-container-low); border-radius:var(--md-shape-sm);
+                            border:1px solid var(--md-outline-variant); min-width:100px;">
+                    <!-- Score Ring -->
+                    <svg width="56" height="56" viewBox="0 0 56 56">
+                        <circle cx="28" cy="28" r="22" fill="none" stroke="var(--md-outline-variant)" stroke-width="5"/>
+                        <circle cx="28" cy="28" r="22" fill="none" stroke="${color}" stroke-width="5"
+                            stroke-dasharray="${dash.toFixed(1)} ${circumference.toFixed(1)}"
+                            stroke-linecap="round" transform="rotate(-90 28 28)"/>
+                        <text x="28" y="33" text-anchor="middle" font-size="12" font-weight="600" fill="${color}">${t.score.toFixed(0)}</text>
+                    </svg>
+                    <div style="font-weight:500; font-size:0.8125rem; text-align:center; word-break:break-all;">${t.scope_id}</div>
+                    <div style="display:flex; align-items:center; gap:0.25rem; font-size:0.7rem; color:${color};">
+                        <span class="material-symbols-outlined" style="font-size:14px">${scoreIcon(t.score)}</span>
+                        ${scoreLabel(t.score)}
+                    </div>
+                </div>`;
+            };
+
+            const sections = [
+                { key: 'bus', label: 'Buses', icon: 'directions_bus' },
+                { key: 'route', label: 'Routes', icon: 'route' },
+                { key: 'timeslot', label: 'Timeslots', icon: 'schedule' },
+            ];
+
+            container.innerHTML = sections
+                .filter(s => groups[s.key]?.length)
+                .map(s => `
+                    <div style="margin-bottom:1.25rem;">
+                        <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+                            <span class="material-symbols-outlined" style="font-size:18px; color:var(--md-on-surface-variant)">${s.icon}</span>
+                            <span style="font-size:0.75rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--md-on-surface-variant);">${s.label}</span>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:0.75rem;">
+                            ${groups[s.key].sort((a, b) => a.score - b.score).map(renderCard).join('')}
+                        </div>
+                    </div>
+                `).join('');
+
         } catch (e) { }
     },
 
-    async loadStats() {
-        try {
-            // Mock stats if endpoints don't exist for summary, or derive from alerts
-            // We already update alert count in loadAlerts
-        } catch (e) { }
-    },
+
 
     async ackAlert(id) {
         try {
@@ -239,15 +281,24 @@ const App = {
             return this.toast('Select a video file first', 'error');
         }
 
+        // Fleet context (optional)
+        const busId = (document.getElementById('scan-bus-select')?.value || '').trim();
+        const routeId = (document.getElementById('scan-route-display')?.value || '').trim();
+        const timeslot = (document.getElementById('scan-timeslot-input')?.value || '').trim();
+
         btn.disabled = true;
         btn.textContent = '⏳ Running all models...';
         resultsDiv.classList.add('hidden');
 
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
+        if (busId) formData.append('bus_id', busId);
+        if (routeId) formData.append('route_id', routeId);
+        if (timeslot) formData.append('timeslot', timeslot);
 
         try {
-            this.toast('Scanning video with all models...', 'safe');
+            const fleetMsg = busId ? `Scanning for bus ${busId}...` : 'Scanning video with all models...';
+            this.toast(fleetMsg, 'safe');
             const res = await fetch('/scan/video', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${this.state.token}` },
@@ -259,7 +310,11 @@ const App = {
             if (data.error) throw new Error(data.error);
 
             this._renderScanResults(data);
-            this.toast('Scan complete!', 'success');
+            if (data.event_id) {
+                this.toast(`Scan complete! Event #${data.event_id} logged — trust updated.`, 'success');
+            } else {
+                this.toast('Scan complete!', 'success');
+            }
         } catch (e) {
             console.error('[Scan] error:', e);
             this.toast('Scan failed: ' + e.message, 'error');
@@ -275,6 +330,18 @@ const App = {
         const resultsDiv = document.getElementById('scan-results');
         resultsDiv.classList.remove('hidden');
         this.currentScanRefId = data.reference_id;
+
+        // Fleet event badge (shown if scan was tagged to a bus)
+        const existingBadge = document.getElementById('scan-event-badge');
+        if (existingBadge) existingBadge.remove();
+        if (data.event_id) {
+            const badge = document.createElement('div');
+            badge.id = 'scan-event-badge';
+            badge.style.cssText = 'margin-bottom:0.75rem; padding:0.5rem 1rem; border-radius:8px; background:rgba(26,115,232,0.1); border:1px solid var(--md-primary); font-size:0.8125rem; display:flex; align-items:center; gap:0.5rem;';
+            badge.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:var(--md-primary)">link</span>
+                <span>Linked to <strong>${data.bus_id}</strong> / Route <strong>${data.route_id}</strong> — Event <strong>#${data.event_id}</strong> logged${data.alert_id ? ` · Alert <strong>#${data.alert_id}</strong> raised` : ''}</span>`;
+            resultsDiv.prepend(badge);
+        }
 
         // Severity banner
         const banner = document.getElementById('scan-severity-banner');
@@ -343,6 +410,34 @@ const App = {
             }
         } catch (e) { }
         this.loadROI();
+        this._loadScanFleetDropdown();
+    },
+
+    // Populate the bus dropdown in the Scanner's Fleet Context card
+    async _loadScanFleetDropdown() {
+        const sel = document.getElementById('scan-bus-select');
+        if (!sel) return;
+        try {
+            const buses = await this.api('/fleet/buses');
+            // Store route_id lookup by bus_id for auto-fill
+            this._scanBusRouteMap = {};
+            buses.forEach(b => { this._scanBusRouteMap[b.bus_id] = b.route_id; });
+            // Re-build options
+            const current = sel.value;
+            sel.innerHTML = '<option value="">— No bus selected —</option>' +
+                buses.map(b => `<option value="${b.bus_id}">${b.bus_id}</option>`).join('');
+            if (current) sel.value = current;
+            this.onScanBusChange(sel);
+        } catch (e) { }
+    },
+
+    _scanBusRouteMap: {},
+
+    onScanBusChange(sel) {
+        const routeInput = document.getElementById('scan-route-display');
+        if (!routeInput) return;
+        const busId = sel.value;
+        routeInput.value = busId ? (this._scanBusRouteMap[busId] || '') : '';
     },
 
     // --- ROI Management ---
@@ -628,6 +723,117 @@ const App = {
     }
 };
 
+// ── Fleet Management ──────────────────────────────────────────────
+App.loadFleet = async function () {
+    await Promise.all([App._loadBuses(), App._loadRoutes()]);
+};
+
+App._loadBuses = async function () {
+    const wrap = document.getElementById('bus-table-wrap');
+    if (!wrap) return;
+    try {
+        const buses = await App.api('/fleet/buses');
+        if (!buses.length) {
+            wrap.innerHTML = `<div class="text-center text-muted" style="padding:2rem">
+                <span class="material-symbols-outlined" style="font-size:32px;opacity:0.3;display:block;margin-bottom:0.5rem">directions_bus</span>
+                No buses registered yet</div>`;
+            return;
+        }
+        wrap.innerHTML = `<table>
+            <tr><th>Bus ID</th><th>Route</th><th>Model</th><th>Year</th><th>Capacity</th><th></th></tr>
+            ${buses.map(b => `<tr>
+                <td><strong>${b.bus_id}</strong></td>
+                <td>${b.route_id}</td>
+                <td>${b.model}</td>
+                <td>${b.year}</td>
+                <td>${b.capacity}</td>
+                <td><button class="btn btn-sm btn-outline" style="padding:0 0.4rem" title="Delete" onclick="App.deleteBus('${b.bus_id}')">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#ef4444">delete</span>
+                </button></td>
+            </tr>`).join('')}
+        </table>`;
+    } catch (e) { }
+};
+
+App._loadRoutes = async function () {
+    const wrap = document.getElementById('route-table-wrap');
+    if (!wrap) return;
+    try {
+        const routes = await App.api('/fleet/routes');
+        if (!routes.length) {
+            wrap.innerHTML = `<div class="text-center text-muted" style="padding:2rem">
+                <span class="material-symbols-outlined" style="font-size:32px;opacity:0.3;display:block;margin-bottom:0.5rem">route</span>
+                No routes registered yet</div>`;
+            return;
+        }
+        wrap.innerHTML = `<table>
+            <tr><th>Route ID</th><th>Name</th><th>From</th><th>To</th><th>Dist (km)</th><th></th></tr>
+            ${routes.map(r => `<tr>
+                <td><strong>${r.route_id}</strong></td>
+                <td>${r.name}</td>
+                <td>${r.start_location}</td>
+                <td>${r.end_location}</td>
+                <td>${r.distance_km}</td>
+                <td><button class="btn btn-sm btn-outline" style="padding:0 0.4rem" title="Delete" onclick="App.deleteRoute('${r.route_id}')">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#ef4444">delete</span>
+                </button></td>
+            </tr>`).join('')}
+        </table>`;
+    } catch (e) { }
+};
+
+App.addBus = async function () {
+    const busId = document.getElementById('bus-id-input').value.trim();
+    const routeId = document.getElementById('bus-route-input').value.trim();
+    const model = document.getElementById('bus-model-input').value.trim();
+    const year = parseInt(document.getElementById('bus-year-input').value);
+    const capacity = parseInt(document.getElementById('bus-capacity-input').value);
+    if (!busId || !routeId || !model || !year || !capacity)
+        return App.toast('Fill in all bus fields', 'error');
+    try {
+        await App.api('/fleet/buses', 'POST', { bus_id: busId, route_id: routeId, model, year, capacity });
+        App.toast(`Bus ${busId} registered!`, 'success');
+        ['bus-id-input', 'bus-route-input', 'bus-model-input', 'bus-year-input', 'bus-capacity-input']
+            .forEach(id => document.getElementById(id).value = '');
+        App._loadBuses();
+    } catch (e) { }
+};
+
+App.deleteBus = async function (busId) {
+    if (!confirm(`Delete bus ${busId}?`)) return;
+    try {
+        await App.api(`/fleet/buses/${encodeURIComponent(busId)}`, 'DELETE');
+        App.toast(`Bus ${busId} removed`, 'success');
+        App._loadBuses();
+    } catch (e) { }
+};
+
+App.addRoute = async function () {
+    const routeId = document.getElementById('route-id-input').value.trim();
+    const name = document.getElementById('route-name-input').value.trim();
+    const start = document.getElementById('route-start-input').value.trim();
+    const end = document.getElementById('route-end-input').value.trim();
+    const dist = parseFloat(document.getElementById('route-dist-input').value);
+    if (!routeId || !name || !start || !end || isNaN(dist))
+        return App.toast('Fill in all route fields', 'error');
+    try {
+        await App.api('/fleet/routes', 'POST', { route_id: routeId, name, start_location: start, end_location: end, distance_km: dist });
+        App.toast(`Route ${routeId} registered!`, 'success');
+        ['route-id-input', 'route-name-input', 'route-start-input', 'route-end-input', 'route-dist-input']
+            .forEach(id => document.getElementById(id).value = '');
+        App._loadRoutes();
+    } catch (e) { }
+};
+
+App.deleteRoute = async function (routeId) {
+    if (!confirm(`Delete route ${routeId}?`)) return;
+    try {
+        await App.api(`/fleet/routes/${encodeURIComponent(routeId)}`, 'DELETE');
+        App.toast(`Route ${routeId} removed`, 'success');
+        App._loadRoutes();
+    } catch (e) { }
+};
+
 window.App = App;
 window.onload = () => {
     App.initMdSelects(); // Init custom dropdowns for auth view too
@@ -636,7 +842,8 @@ window.onload = () => {
 
 /* ── Custom Material Select Dropdown Logic ──────────────── */
 App.initMdSelects = function () {
-    document.querySelectorAll('.md-select').forEach(wrapper => {
+    document.querySelectorAll('.md-select:not(.md-initialized)').forEach(wrapper => {
+        wrapper.classList.add('md-initialized');
         const trigger = wrapper.querySelector('.md-select-trigger');
         const menu = wrapper.querySelector('.md-select-menu');
         const valueSpan = wrapper.querySelector('.md-select-value');

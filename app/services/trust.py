@@ -31,8 +31,7 @@ def upsert_score(session: Session, scope_type: str, scope_id: str, penalty: floa
 
 def apply_trust_impact(session: Session, event: ViolationEvent) -> None:
     penalty = penalty_from_event(event)
-    if penalty <= 0:
-        return
+    # Always upsert so that even clean scans register trust entries
     upsert_score(session, "bus", event.bus_id, penalty)
     upsert_score(session, "route", event.route_id, penalty)
     upsert_score(session, "timeslot", event.timeslot, penalty)
