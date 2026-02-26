@@ -1,5 +1,6 @@
 import logging
 import tempfile
+import threading
 from collections import deque
 from pathlib import Path
 from typing import Annotated
@@ -50,6 +51,8 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(n
 router = APIRouter()
 inference_service = InferenceService()
 feedback_service = FeedbackService()
+
+_stream_cancel = threading.Event()
 
 
 def _extract_token(auth_header: str | None) -> str:
@@ -239,6 +242,7 @@ async def upload_stream_file(
 @router.get("/stream/live")
 def stream_live(source: str = "0"):
     """MJPEG stream with YOLO annotations. source=0 for webcam, or a file/RTSP path."""
+    _stream_cancel.clear()
     cam_source = int(source) if source.isdigit() else source
 
     def generate():
@@ -258,7 +262,7 @@ def stream_live(source: str = "0"):
         frame_count = 0
         
         try:
-            while True:
+            while not _stream_cancel.is_set():
                 ok, frame = cap.read()
                 if not ok:
                     # If this is a file (string source), loop it
@@ -293,6 +297,13 @@ def stream_live(source: str = "0"):
             cap.release()
 
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@router.post("/stream/stop")
+def stream_stop():
+    """Signal the live stream generator to stop and release the camera."""
+    _stream_cancel.set()
+    return {"status": "stopped"}
 
 
 @router.get("/dashboard")

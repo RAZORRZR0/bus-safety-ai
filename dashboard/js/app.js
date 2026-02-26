@@ -622,7 +622,10 @@ const App = {
         this.toast(`Stream started: ${source}`, 'success');
     },
 
-    stopStream() {
+    async stopStream() {
+        // Signal backend to stop the stream generator and release the camera
+        try { await this.api('/stream/stop', 'POST'); } catch (e) { }
+
         const feedImg = document.getElementById('live-feed');
         const placeholder = document.getElementById('feed-placeholder');
         const status = document.getElementById('feed-status');
