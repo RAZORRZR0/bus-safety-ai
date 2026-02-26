@@ -623,18 +623,31 @@ const App = {
     },
 
     async stopStream() {
-        // Signal backend to stop the stream generator and release the camera
-        try { await this.api('/stream/stop', 'POST'); } catch (e) { }
-
         const feedImg = document.getElementById('live-feed');
         const placeholder = document.getElementById('feed-placeholder');
         const status = document.getElementById('feed-status');
 
+        // 1. Disconnect browser from MJPEG stream immediately
         if (feedImg) {
             feedImg.src = '';
             feedImg.style.display = 'none';
         }
         if (placeholder) placeholder.style.display = '';
+        if (status) {
+            status.textContent = 'Stopping...';
+            status.className = 'badge badge-warn';
+        }
+
+        // 2. Tell backend to stop generator and release camera
+        try {
+            const headers = {};
+            if (this.state.token) headers['Authorization'] = `Bearer ${this.state.token}`;
+            const res = await fetch('/stream/stop', { method: 'POST', headers });
+            console.log('[Stream] stop response:', res.status);
+        } catch (e) {
+            console.warn('[Stream] stop request failed:', e);
+        }
+
         if (status) {
             status.textContent = 'Stopped';
             status.className = 'badge badge-safe';

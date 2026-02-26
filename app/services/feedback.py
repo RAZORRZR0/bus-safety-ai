@@ -17,8 +17,9 @@ def _ensure_dir(path: Path) -> None:
 
 
 class FeedbackService:
-    def __init__(self):
+    def __init__(self, retrain_service=None):
         self.evidence_dir = Path("evidence")
+        self._retrain_service = retrain_service
         
         # Datasets directories for model retraining
         self.violence_feedback_dir = DATASET_ROOT / "Violence"
@@ -50,6 +51,10 @@ class FeedbackService:
             except Exception as e:
                 logger.error(f"Failed to collect hard example for retraining: {e}")
                 # We do not fail the request if just the file copy fails
+
+            # 3. Trigger background retraining
+            if self._retrain_service is not None:
+                self._retrain_service.retrain_async()
         
         return feedback_record
 

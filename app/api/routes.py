@@ -44,13 +44,15 @@ from app.services.trust import apply_trust_impact
 from app.storage.db import get_session
 
 from app.services.feedback import FeedbackService
+from app.services.retrain import RetrainService
 
 logger = logging.getLogger("transport")
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 router = APIRouter()
 inference_service = InferenceService()
-feedback_service = FeedbackService()
+retrain_service = RetrainService(inference_service)
+feedback_service = FeedbackService(retrain_service=retrain_service)
 
 _stream_cancel = threading.Event()
 
@@ -100,6 +102,11 @@ def favicon():
 @router.get("/model/status")
 def model_status():
     return inference_service.model_status()
+
+
+@router.get("/model/retrain-status")
+def retrain_status():
+    return retrain_service.status
 
 
 @router.post("/model/switch")
@@ -248,53 +255,56 @@ def stream_live(source: str = "0"):
     def generate():
         cap = cv2.VideoCapture(cam_source)
         if not cap.isOpened():
-            # Yield a single error frame
             err = np.zeros((360, 640, 3), dtype=np.uint8)
             cv2.putText(err, f"Cannot open: {source}", (30, 180),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             _, buf = cv2.imencode(".jpg", err)
             yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
             return
-        
-        # Buffer for violence AI (needs 16 frames sequence)
+
         frame_buffer = deque(maxlen=16)
         violence_score = 0.0
         frame_count = 0
-        
+
         try:
             while not _stream_cancel.is_set():
                 ok, frame = cap.read()
                 if not ok:
-                    # If this is a file (string source), loop it
                     if isinstance(cam_source, str):
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         ok, frame = cap.read()
-                    
-                    # If still not ok (e.g. webcam disconnect or empty file), exit
                     if not ok:
                         break
-                
-                # Maintain rolling buffer
+
+                # Check cancel again after (potentially slow) read
+                if _stream_cancel.is_set():
+                    break
+
                 frame_buffer.append(frame)
                 frame_count += 1
-                
-                # Run violence AI every 8 frames (approx 3-4 times/sec)
-                # Only if we have a full sequence of 16 frames
-                if len(frame_buffer) == 16 and frame_count % 8 == 0:
+
+                # Violence AI every 8 frames — skip if cancel requested
+                if len(frame_buffer) == 16 and frame_count % 8 == 0 and not _stream_cancel.is_set():
                     try:
-                        # logical_frames = list(frame_buffer)
-                        # The prediction model expects a list of frames.
-                        # Using the latest 16 frames available.
                         violence_score = inference_service.classify_violence_frames(list(frame_buffer))
-                    except Exception as e:
-                        # Fallback or log error, keep previous score to avoid flickering
+                    except Exception:
                         pass
 
+                # Check cancel before expensive annotation
+                if _stream_cancel.is_set():
+                    break
+
                 annotated = inference_service.analyze_frame_annotated(frame, violence_score=violence_score)
+
+                # Check cancel before yielding
+                if _stream_cancel.is_set():
+                    break
+
                 _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
         finally:
             cap.release()
+            logger.info("Stream generator stopped, camera released")
 
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -302,6 +312,7 @@ def stream_live(source: str = "0"):
 @router.post("/stream/stop")
 def stream_stop():
     """Signal the live stream generator to stop and release the camera."""
+    logger.info("POST /stream/stop — setting cancel event")
     _stream_cancel.set()
     return {"status": "stopped"}
 
