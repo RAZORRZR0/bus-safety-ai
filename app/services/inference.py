@@ -8,9 +8,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
+try:
+    import onnxruntime as ort
+except ImportError:
+    ort = None
 
 from app.core.config import settings
 from app.models.domain import EventIngestRequest
+from app.services.models.advanced_violence import TemporalPyramidNetwork, Int2D3DCNN
 
 logger = logging.getLogger("transport.inference")
 
@@ -77,6 +82,7 @@ class InferenceService:
         self._load_model()
         # Violence classifier
         self._violence_model = None
+        self._violence_ort_session = None # ONNX Runtime session
         self._violence_device = None
         self._violence_transform = transforms.Compose([
             transforms.ToPILImage(),
@@ -168,22 +174,46 @@ class InferenceService:
 
     # ── Violence classifier helpers ───────────────────────────────────────
     def _load_violence_model(self) -> None:
-        """Load trained violence classifier if the checkpoint exists."""
+        """Load trained violence classifier: attempts ONNX first for speed, then PyTorch."""
         ckpt_path = Path(settings.violence_model_path)
+        
+        # 1. Attempt to load ONNX model for acceleration
+        onnx_path = ckpt_path.with_suffix('.onnx')
+        if ort is not None and onnx_path.exists():
+            try:
+                providers = ['CUDAExecutionProvider'] if torch.cuda.is_available() else ['CPUExecutionProvider']
+                self._violence_ort_session = ort.InferenceSession(str(onnx_path), providers=providers)
+                self._violence_device = "onnx"
+                logger.info(f"Loaded ONNX violence model: {onnx_path.name}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to load ONNX violence model, falling back to PyTorch: {e}")
+
+        # 2. PyTorch checkpoint fallback
         if not ckpt_path.exists():
             logger.info("Violence model not found at %s — will use motion heuristic", ckpt_path)
             return
+
         try:
             device = (torch_directml.device() if _DML
                       else torch.device("cuda" if torch.cuda.is_available() else "cpu"))
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            model = _ViolenceClassifier()
+            
+            # Support the advanced architectures from the research papers
+            model_type = ckpt.get("model_type", "legacy")
+            if model_type == "int2d3d":
+                model = Int2D3DCNN()
+            elif model_type == "tpn":
+                model = TemporalPyramidNetwork()
+            else:
+                model = _ViolenceClassifier()
+                
             model.load_state_dict(ckpt["model_state_dict"])
             model.to(device).eval()
             self._violence_model = model
             self._violence_device = device
-            logger.info("Violence model loaded (%s) — test_acc=%.3f",
-                        device, ckpt.get("test_acc", -1))
+            logger.info("Violence model loaded (%s, type=%s) — test_acc=%.3f",
+                        device, model_type, ckpt.get("test_acc", -1))
         except Exception as e:
             logger.warning("Failed to load violence model: %s", e)
 
@@ -198,19 +228,38 @@ class InferenceService:
         return clip
 
     def classify_violence_frames(self, frames_bgr: list[np.ndarray]) -> float:
-        """Run the violence classifier on a list of BGR frames.
-        Returns confidence 0-1 (higher = more violent).
-        Falls back to motion heuristic if model unavailable."""
-        if self._violence_model is None or len(frames_bgr) == 0:
-            # fallback
+        """Run the violence classifier on a list of BGR frames."""
+        if len(frames_bgr) == 0:
+            return 0.0
+            
+        if self._violence_ort_session is None and self._violence_model is None:
+            # Fallback to motion heuristic
             if len(frames_bgr) >= 2:
                 return self._estimate_aggression(frames_bgr[-1], frames_bgr[0])
             return 0.0
-        clip = self._prep_frames_for_violence(frames_bgr).to(self._violence_device)
+
+        clip = self._prep_frames_for_violence(frames_bgr)
+        
+        # Accelerate inference if ONNX is available
+        if self._violence_ort_session is not None:
+            try:
+                ort_inputs = {self._violence_ort_session.get_inputs()[0].name: clip.numpy()}
+                ort_outs = self._violence_ort_session.run(None, ort_inputs)
+                logit = float(ort_outs[0][0])
+                score = 1.0 / (1.0 + np.exp(-logit)) # sigmoid
+                logger.debug("ONNX Violence score: %.3f", score)
+                return score
+            except Exception as e:
+                logger.warning(f"ONNX inference failed: {e}")
+                # Fallthrough to PyTorch if available, though usually we only have one or the other.
+                if self._violence_model is None:
+                    return 0.0
+
+        clip_t = clip.to(self._violence_device)
         with torch.no_grad():
-            logit = self._violence_model(clip)
+            logit = self._violence_model(clip_t)
             score = float(torch.sigmoid(logit).item())
-        logger.debug("Violence score: %.3f", score)
+        logger.debug("PyTorch Violence score: %.3f", score)
         return score
 
     def classify_violence_video(self, video_path: str,
