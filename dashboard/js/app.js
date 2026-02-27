@@ -100,6 +100,7 @@ const App = {
             this.startPolling();
             this.setupROI();
             this.initMdSelects();
+            this.loadCameras();
         }
     },
 
@@ -408,6 +409,35 @@ const App = {
                 selectEl.value = data.current_model;
                 this.syncMdSelect(selectEl);
             }
+
+            // Violence Model
+            const vStatusEl = document.getElementById('violence-model-status-text');
+            const vSelectEl = document.getElementById('violence-model-select');
+            const vMenuEl = document.getElementById('violence-md-select-menu');
+            const vValueEl = document.getElementById('violence-md-select-value');
+
+            if (vStatusEl) {
+                vStatusEl.textContent = data.current_violence_model
+                    ? `Active: ${data.current_violence_model} ✅`
+                    : `No violence model active ⚠️`;
+            }
+
+            if (vSelectEl && vMenuEl && vValueEl && data.available_violence_models) {
+                const current = data.current_violence_model;
+
+                vSelectEl.innerHTML = data.available_violence_models.map(m =>
+                    `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`
+                ).join('');
+
+                vMenuEl.innerHTML = data.available_violence_models.map(m =>
+                    `<li class="md-select-option ${m === current ? 'active' : ''}" data-value="${m}" role="option">${m}</li>`
+                ).join('');
+
+                vValueEl.textContent = current || 'Select Model';
+
+                // Re-initialize select event listeners for the newly injected menu items
+                this.syncMdSelect(vSelectEl);
+            }
         } catch (e) { }
         this.loadROI();
         this._loadScanFleetDropdown();
@@ -438,6 +468,58 @@ const App = {
         if (!routeInput) return;
         const busId = sel.value;
         routeInput.value = busId ? (this._scanBusRouteMap[busId] || '') : '';
+    },
+
+    // --- Camera Enumeration (uses browser MediaDevices API — same as Discord/Zoom) ---
+    async loadCameras() {
+        try {
+            // Step 1: enumerate devices (labels may be empty without permission)
+            let devices = await navigator.mediaDevices.enumerateDevices();
+            let videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+            // Step 2: if labels are empty, briefly request camera to unlock labels
+            if (videoDevices.length > 0 && !videoDevices[0].label) {
+                try {
+                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    tempStream.getTracks().forEach(t => t.stop()); // release immediately
+                    devices = await navigator.mediaDevices.enumerateDevices();
+                    videoDevices = devices.filter(d => d.kind === 'videoinput');
+                } catch (permErr) {
+                    console.warn('[Cameras] Permission denied, using generic names');
+                }
+            }
+
+            if (!videoDevices.length) return;
+
+            // Build camera list: index = OpenCV camera index
+            const cameras = videoDevices.map((dev, i) => ({
+                id: String(i),
+                name: dev.label || `Camera (${i})`
+            }));
+
+            const sourceSelect = document.getElementById('stream-source');
+            const wrapper = sourceSelect?.closest('.md-select');
+            if (!sourceSelect || !wrapper) return;
+
+            const menu = wrapper.querySelector('.md-select-menu');
+            const valueSpan = wrapper.querySelector('.md-select-value');
+
+            sourceSelect.innerHTML = cameras.map((cam, i) =>
+                `<option value="${cam.id}" ${i === 0 ? 'selected' : ''}>${cam.name}</option>`
+            ).join('');
+
+            menu.innerHTML = cameras.map((cam, i) =>
+                `<li class="md-select-option ${i === 0 ? 'active' : ''}" data-value="${cam.id}" role="option">${cam.name}</li>`
+            ).join('');
+
+            if (valueSpan && cameras.length > 0) {
+                valueSpan.textContent = cameras[0].name;
+            }
+
+            this.syncMdSelect(sourceSelect);
+        } catch (e) {
+            console.warn('[Cameras] Failed to load cameras:', e);
+        }
     },
 
     // --- ROI Management ---
@@ -574,6 +656,19 @@ const App = {
         try {
             const data = await this.api('/model/switch', 'POST', { model });
             this.toast(`Switched to ${data.current_model}`, 'success');
+            this.loadModelStatus();
+        } catch (e) {
+            this.loadModelStatus();
+        }
+    },
+
+    async switchViolenceModel() {
+        const model = document.getElementById('violence-model-select').value;
+        const statusEl = document.getElementById('violence-model-status-text');
+        if (statusEl) statusEl.textContent = 'Switching violence model...';
+        try {
+            const data = await this.api('/model/switch', 'POST', { violence_model: model });
+            this.toast(`Switched violence model to ${data.current_violence_model}`, 'success');
             this.loadModelStatus();
         } catch (e) {
             this.loadModelStatus();
@@ -901,6 +996,7 @@ App.initMdSelects = function () {
 };
 
 // Sync a custom dropdown UI when native select value changes programmatically
+// Also re-binds click handlers for dynamically injected menu items
 App.syncMdSelect = function (selectEl) {
     const wrapper = selectEl.closest('.md-select');
     if (!wrapper) return;
@@ -912,5 +1008,18 @@ App.syncMdSelect = function (selectEl) {
         const isActive = opt.dataset.value === val;
         opt.classList.toggle('active', isActive);
         if (isActive && valueSpan) valueSpan.textContent = opt.textContent;
+
+        // Re-bind click handler (remove old by cloning)
+        const newOpt = opt.cloneNode(true);
+        newOpt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const v = newOpt.dataset.value;
+            selectEl.value = v;
+            if (valueSpan) valueSpan.textContent = newOpt.textContent;
+            menu.querySelectorAll('.md-select-option').forEach(o => o.classList.remove('active'));
+            newOpt.classList.add('active');
+            wrapper.classList.remove('open');
+        });
+        opt.parentNode.replaceChild(newOpt, opt);
     });
 };

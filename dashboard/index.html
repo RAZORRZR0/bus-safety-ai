@@ -205,6 +205,32 @@
           </div>
         </div>
 
+        <!-- Violence Model Selector -->
+        <div class="card flex justify-between items-center" style="margin-bottom: 1rem; padding: 1rem 1.25rem;">
+          <div class="flex items-center" style="gap: 0.75rem;">
+            <span class="material-symbols-outlined" style="color:var(--md-primary)">sports_mma</span>
+            <div>
+              <div style="font-weight: 500; font-size:0.875rem">Violence Model</div>
+              <small id="violence-model-status-text">Loading...</small>
+            </div>
+          </div>
+          <div class="flex items-center" style="gap: 0.5rem;">
+            <div class="md-select" data-target="violence-model-select" style="min-width: 220px;">
+              <select id="violence-model-select" style="display:none">
+                <!-- Populated dynamically -->
+              </select>
+              <button type="button" class="md-select-trigger" aria-haspopup="listbox">
+                <span class="md-select-value" id="violence-md-select-value">Loading...</span>
+                <span class="material-symbols-outlined md-select-arrow">arrow_drop_down</span>
+              </button>
+              <ul class="md-select-menu" role="listbox" id="violence-md-select-menu">
+                <!-- Populated dynamically -->
+              </ul>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="App.switchViolenceModel()">Switch</button>
+          </div>
+        </div>
+
         <!-- ROI Configuration -->
         <div class="card" style="margin-bottom: 1rem; padding: 1rem 1.25rem;">
           <div class="flex items-center justify-between" style="margin-bottom: 1rem;">
@@ -568,7 +594,7 @@
     </main>
   </div>
 
-  <script src="/static/js/app.js?v=5"></script>
+  <script src="/static/js/app.js?v=6"></script>
 </body>
 
 </html>

@@ -100,19 +100,43 @@ class InferenceService:
             self._model = None
 
     def model_status(self) -> dict[str, str | bool | list]:
+        available_violence_models = []
+        models_dir = Path("models")
+        if models_dir.exists():
+            available_violence_models = [
+                f.name for f in models_dir.iterdir()
+                if f.is_file() and f.suffix in {".pth", ".onnx"}
+            ]
+        
         return {
             "yolo_available": self._model is not None,
             "current_model": self._current_model_name,
             "available_models": AVAILABLE_MODELS,
+            "current_violence_model": Path(settings.violence_model_path).name,
+            "available_violence_models": available_violence_models,
         }
 
     def switch_model(self, model_name: str) -> dict:
         if model_name not in AVAILABLE_MODELS:
-            raise ValueError(f"Unknown model: {model_name}. Choose from {AVAILABLE_MODELS}")
+            raise ValueError(f"Unknown YOLO model: {model_name}. Choose from {AVAILABLE_MODELS}")
         self._current_model_name = model_name
         settings.yolo_model_path = model_name
         self._model = None
         self._load_model()
+        return self.model_status()
+
+    def switch_violence_model(self, model_name: str) -> dict:
+        models_dir = Path("models")
+        model_path = models_dir / model_name
+        
+        if not model_path.exists():
+            raise ValueError(f"Violence model not found: {model_name}")
+            
+        settings.violence_model_path = str(model_path)
+        self._violence_model = None
+        self._violence_ort_session = None
+        self._violence_device = None
+        self._load_violence_model()
         return self.model_status()
 
     def _people_count(self, frame: np.ndarray) -> int:
