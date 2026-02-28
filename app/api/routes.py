@@ -115,10 +115,18 @@ def model_switch(
     _: User = Depends(get_current_user),
 ):
     model_name = payload.get("model")
-    if not model_name:
-        raise HTTPException(status_code=400, detail="Missing 'model' field.")
+    violence_model_name = payload.get("violence_model")
+    
+    if not model_name and not violence_model_name:
+        raise HTTPException(status_code=400, detail="Missing 'model' or 'violence_model' field.")
+    
     try:
-        return inference_service.switch_model(model_name)
+        result = {}
+        if model_name:
+            result = inference_service.switch_model(model_name)
+        if violence_model_name:
+            result = inference_service.switch_violence_model(violence_model_name)
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
