@@ -707,33 +707,105 @@ const App = {
         const source = custom || document.getElementById('stream-source').value;
         const feedImg = document.getElementById('live-feed');
         const placeholder = document.getElementById('feed-placeholder');
+        const loading = document.getElementById('feed-loading');
+        const loadingSub = document.getElementById('feed-loading-sub');
         const status = document.getElementById('feed-status');
+        const startBtn = document.querySelector('button[onclick="App.startStream()"]');
 
-        feedImg.src = `/stream/live?source=${encodeURIComponent(source)}`;
-        feedImg.style.display = 'block';
+        // ── 1. Enter loading state ────────────────────────────────────
         placeholder.style.display = 'none';
-        status.textContent = 'Streaming';
-        status.className = 'badge badge-danger';
-        this.toast(`Stream started: ${source}`, 'success');
+        feedImg.style.display = 'none';
+        loading.style.display = '';
+        loadingSub.textContent = source.startsWith('rtsp') ? 'Connecting to RTSP stream...' :
+            source.match(/\.(mp4|avi|mov)/) ? 'Opening video file...' :
+                'Opening video device and starting AI pipeline';
+
+        if (status) { status.textContent = 'Connecting…'; status.className = 'badge badge-warn'; }
+        if (startBtn) startBtn.disabled = true;
+
+        // ── 2. Point the image at the stream endpoint ─────────────────
+        feedImg.src = '';  // reset first to avoid stale frame
+        feedImg.src = `/stream/live?source=${encodeURIComponent(source)}`;
+
+        // ── 3. When first MJPEG frame arrives → hide spinner, show feed
+        const onLoad = () => {
+            loading.style.display = 'none';
+            feedImg.style.display = 'block';
+            if (status) { status.textContent = 'Streaming'; status.className = 'badge badge-danger'; }
+            if (startBtn) startBtn.disabled = false;
+            this.toast(`Stream started: ${source}`, 'success');
+            feedImg.removeEventListener('load', onLoad);
+            feedImg.removeEventListener('error', this.state._streamErrorHandler);
+            this.state._streamErrorHandler = null;
+        };
+
+        // ── 4. If connection fails → show error in placeholder ─────────
+        const onError = () => {
+            if (!this.state._streamErrorHandler) return; // was already cleaned up by stopStream
+            loading.style.display = 'none';
+            feedImg.style.display = 'none';
+            placeholder.style.display = '';
+            placeholder.innerHTML = `
+                <span class="material-symbols-outlined" style="font-size:48px;opacity:0.4;display:block;margin-bottom:0.75rem;color:var(--md-error)">videocam_off</span>
+                <p style="margin-bottom:0.5rem;color:var(--md-error)">Could not open source</p>
+                <small>Check the source or webcam connection and try again.</small>`;
+            if (status) { status.textContent = 'Failed'; status.className = 'badge badge-danger'; }
+            if (startBtn) startBtn.disabled = false;
+            this.toast('Failed to connect to stream', 'danger');
+            feedImg.removeEventListener('load', onLoad);
+            feedImg.removeEventListener('error', onError);
+            this.state._streamErrorHandler = null;
+        };
+
+        // Store reference so stopStream can detach it before clearing src
+        this.state._streamErrorHandler = onError;
+
+        // ── 5. Safety timeout: 15s fallback if nothing happens ─────────
+        const timeout = setTimeout(() => {
+            if (loading.style.display !== 'none') onError();
+        }, 15000);
+        this.state._streamTimeout = timeout;
+
+        feedImg.addEventListener('load', () => { clearTimeout(timeout); onLoad(); });
+        feedImg.addEventListener('error', () => { clearTimeout(timeout); onError(); });
+
     },
 
     async stopStream() {
         const feedImg = document.getElementById('live-feed');
         const placeholder = document.getElementById('feed-placeholder');
+        const loading = document.getElementById('feed-loading');
         const status = document.getElementById('feed-status');
 
-        // 1. Disconnect browser from MJPEG stream immediately
+        // 1. Remove any pending connection handlers FIRST to avoid spurious errors
+        if (this.state._streamErrorHandler) {
+            feedImg.removeEventListener('error', this.state._streamErrorHandler);
+            this.state._streamErrorHandler = null;
+        }
+        if (this.state._streamTimeout) {
+            clearTimeout(this.state._streamTimeout);
+            this.state._streamTimeout = null;
+        }
+
+        // 2. Disconnect browser from MJPEG stream
         if (feedImg) {
             feedImg.src = '';
             feedImg.style.display = 'none';
         }
-        if (placeholder) placeholder.style.display = '';
+        if (loading) loading.style.display = 'none';
+        if (placeholder) {
+            placeholder.style.display = '';
+            placeholder.innerHTML = `
+                <span class="material-symbols-outlined" style="font-size:48px;opacity:0.3;display:block;margin-bottom:0.75rem">videocam</span>
+                <p style="margin-bottom:0.5rem">Select a source and press Start to begin live detection</p>
+                <small>🟢 Green boxes = Person &nbsp; 🟦 Cyan = Reserved seat ROI</small>`;
+        }
         if (status) {
             status.textContent = 'Stopping...';
             status.className = 'badge badge-warn';
         }
 
-        // 2. Tell backend to stop generator and release camera
+        // 3. Tell backend to stop generator and release camera
         try {
             const headers = {};
             if (this.state.token) headers['Authorization'] = `Bearer ${this.state.token}`;
