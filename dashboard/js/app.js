@@ -331,6 +331,7 @@ const App = {
         const resultsDiv = document.getElementById('scan-results');
         resultsDiv.classList.remove('hidden');
         this.currentScanRefId = data.reference_id;
+        this.lastScanViolence = data.violence;
 
         // Fleet event badge (shown if scan was tagged to a bus)
         const existingBadge = document.getElementById('scan-event-badge');
@@ -437,6 +438,33 @@ const App = {
 
                 // Re-initialize select event listeners for the newly injected menu items
                 this.syncMdSelect(vSelectEl);
+            }
+
+            // Also populate the Live page violence model dropdown
+            const lStatusEl = document.getElementById('live-violence-model-status');
+            const lSelectEl = document.getElementById('live-violence-model-select');
+            const lMenuEl = document.getElementById('live-violence-md-select-menu');
+            const lValueEl = document.getElementById('live-violence-md-select-value');
+
+            if (lStatusEl) {
+                lStatusEl.textContent = data.current_violence_model
+                    ? `Active: ${data.current_violence_model} ✅`
+                    : `No violence model active ⚠️`;
+            }
+
+            if (lSelectEl && lMenuEl && lValueEl && data.available_violence_models) {
+                const current = data.current_violence_model;
+
+                lSelectEl.innerHTML = data.available_violence_models.map(m =>
+                    `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`
+                ).join('');
+
+                lMenuEl.innerHTML = data.available_violence_models.map(m =>
+                    `<li class="md-select-option ${m === current ? 'active' : ''}" data-value="${m}" role="option">${m}</li>`
+                ).join('');
+
+                lValueEl.textContent = current || 'Select Model';
+                this.syncMdSelect(lSelectEl);
             }
         } catch (e) { }
         this.loadROI();
@@ -675,6 +703,19 @@ const App = {
         }
     },
 
+    async switchLiveViolenceModel() {
+        const model = document.getElementById('live-violence-model-select').value;
+        const statusEl = document.getElementById('live-violence-model-status');
+        if (statusEl) statusEl.textContent = 'Switching violence model...';
+        try {
+            const data = await this.api('/model/switch', 'POST', { violence_model: model });
+            this.toast(`Switched violence model to ${data.current_violence_model}`, 'success');
+            this.loadModelStatus();
+        } catch (e) {
+            this.loadModelStatus();
+        }
+    },
+
     // --- Live Stream ---
     async uploadStreamFile() {
         const fileInput = document.getElementById('stream-upload-input');
@@ -881,7 +922,19 @@ const App = {
                 }
                 refId = this.currentScanRefId;
                 finalIsCorrect = refIdOrAction === 'correct_violence';
-                finalType = refIdOrAction;
+
+                if (finalIsCorrect) {
+                    finalType = 'correct_violence';
+                } else {
+                    // Determine the correct feedback type based on what the model predicted
+                    // If model said "no violence" but user says incorrect → false negative (missed violence)
+                    // If model said "violence" but user says incorrect → false positive
+                    if (this.lastScanViolence) {
+                        finalType = 'violence_false_positive';
+                    } else {
+                        finalType = 'violence_false_negative';
+                    }
+                }
             }
 
             const payload = {

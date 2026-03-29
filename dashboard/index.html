@@ -8,7 +8,11 @@
   <meta name="description" content="Real-time transport policing dashboard with AI-powered detection and monitoring">
   <link rel="stylesheet" href="/static/css/style.css">
   <style>
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
   </style>
 </head>
 
@@ -461,6 +465,32 @@
             <div class="badge badge-safe" id="feed-status">Stopped</div>
           </div>
         </header>
+
+        <!-- Violence Model Selector (Live) -->
+        <div class="card flex justify-between items-center" style="margin-bottom: 1rem; padding: 1rem 1.25rem;">
+          <div class="flex items-center" style="gap: 0.75rem;">
+            <span class="material-symbols-outlined" style="color:var(--md-primary)">sports_mma</span>
+            <div>
+              <div style="font-weight: 500; font-size:0.875rem">Violence Model</div>
+              <small id="live-violence-model-status">Loading...</small>
+            </div>
+          </div>
+          <div class="flex items-center" style="gap: 0.5rem;">
+            <div class="md-select" data-target="live-violence-model-select" style="min-width: 220px;">
+              <select id="live-violence-model-select" style="display:none">
+                <!-- Populated dynamically -->
+              </select>
+              <button type="button" class="md-select-trigger" aria-haspopup="listbox">
+                <span class="md-select-value" id="live-violence-md-select-value">Loading...</span>
+                <span class="material-symbols-outlined md-select-arrow">arrow_drop_down</span>
+              </button>
+              <ul class="md-select-menu" role="listbox" id="live-violence-md-select-menu">
+                <!-- Populated dynamically -->
+              </ul>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="App.switchLiveViolenceModel()">Switch</button>
+          </div>
+        </div>
 
         <div class="card" style="margin-bottom: 1rem; padding: 1rem 1.25rem;">
           <div class="flex items-center justify-between" style="flex-wrap:wrap; gap:1rem">

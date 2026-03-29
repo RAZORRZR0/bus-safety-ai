@@ -242,7 +242,7 @@ class InferenceService:
             logger.warning("Failed to load violence model: %s", e)
 
     def _prep_frames_for_violence(self, frames_bgr: list[np.ndarray],
-                                   img_size: int = 112) -> torch.Tensor:
+                                   img_size: int = 224) -> torch.Tensor:
         """Preprocess a list of BGR frames into a (1, T, C, H, W) tensor."""
         tensors = []
         for f in frames_bgr:

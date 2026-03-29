@@ -42,7 +42,7 @@ MODEL_OUT = Path("models/violence_classifier.pth")
 FEEDBACK_DIR = Path("dataset/feedback")
 
 FRAMES_PER_CLIP = 16       # number of frames to sample per video
-IMG_SIZE = 112             # resize frames to 112x112
+IMG_SIZE = 224             # resize frames to 224x224 (MobileNetV2 native resolution)
 BATCH_SIZE = 8
 NUM_EPOCHS = 12
 LR = 1e-4

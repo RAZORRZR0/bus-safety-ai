@@ -15,7 +15,7 @@ class Settings(BaseModel):
     roi_x2: float = 1.0
     roi_y2: float = 1.0
     # Violence classifier
-    violence_model_path: str = "models/violence_classifier.pth"
+    violence_model_path: str = "models/legacy_mobilenetv2.pth"
     violence_threshold: float = 0.6
 
 
