@@ -3,6 +3,9 @@ import tempfile
 import threading
 import time
 from collections import defaultdict, deque
+from functools import partial
+
+import anyio
 from pathlib import Path
 from typing import Annotated
 
@@ -71,6 +74,15 @@ LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_SECONDS = 300
 _login_failures: dict[str, deque] = defaultdict(deque)
 _login_lock = threading.Lock()
+
+
+# Model calls take seconds of CPU. Running them inside an async endpoint froze every other
+# request, so they go to a worker thread. One at a time: the YOLO tracker is not thread-safe.
+_inference_limiter = anyio.CapacityLimiter(1)
+
+
+async def _infer(fn, *args, **kwargs):
+    return await anyio.to_thread.run_sync(partial(fn, *args, **kwargs), limiter=_inference_limiter)
 
 
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
@@ -243,7 +255,7 @@ async def scan_video(
     dest_path.write_bytes(data)
 
     try:
-        result = inference_service.analyze_video_unified(str(dest_path))
+        result = await _infer(inference_service.analyze_video_unified, str(dest_path))
         result["reference_id"] = filename
         result["bus_id"] = bus_id
         result["route_id"] = route_id
@@ -521,7 +533,8 @@ async def ingest_frame(
     if frame is None:
         raise HTTPException(status_code=400, detail="Unsupported image payload.")
 
-    frame_analysis = inference_service.analyze_frame(
+    frame_analysis = await _infer(
+        inference_service.analyze_frame,
         bus_id=bus_id,
         route_id=route_id,
         timeslot=timeslot,
@@ -581,7 +594,7 @@ async def frame_preview(
     frame = cv2.imdecode(npbuf, cv2.IMREAD_COLOR)
     if frame is None:
         raise HTTPException(status_code=400, detail="Unsupported image.")
-    annotated = inference_service.analyze_frame_annotated(frame)
+    annotated = await _infer(inference_service.analyze_frame_annotated, frame)
     _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
     return Response(content=buf.tobytes(), media_type="image/jpeg")
 
