@@ -91,7 +91,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-The 19 tests cover login and 2FA, login throttling, role checks, input validation (IDs that try HTML or file paths are rejected), upload limits, stream tokens, event ingestion → alert → trust score, the severity rules, and audit-chain tamper detection. They run on every push in GitHub Actions.
+The 20 tests cover login and 2FA, login throttling, role checks, input validation (IDs that try HTML or file paths are rejected), upload limits, stream tokens, event ingestion → alert → trust score, the severity rules, and audit-chain tamper detection. They run on every push in GitHub Actions.
 
 ## Security notes
 
