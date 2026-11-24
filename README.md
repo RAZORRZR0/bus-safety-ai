@@ -4,7 +4,7 @@
 
 AI video monitoring for city buses. It watches a camera feed or uploaded clip, detects **violence** and **reserved-seat misuse**, raises alerts, keeps a **tamper-evident evidence trail**, and scores every bus, route and timeslot on how safe it has been.
 
-Final-year project.FastAPI backend, PyTorch models, YOLO person tracking, and a web dashboard.
+Final-year project. FastAPI backend, PyTorch models, YOLO person tracking, and a web dashboard.
 
 ![Demo: log in, scan a bus CCTV clip, get a critical alert and lower trust scores](docs/demo.gif)
 
