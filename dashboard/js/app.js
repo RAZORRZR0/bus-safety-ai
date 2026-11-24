@@ -6,6 +6,23 @@
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// Turn a FastAPI error body into one readable sentence.
+// Validation errors (422) arrive as a list of {loc, msg, type} objects, not a string.
+const errorText = (data, fallback = 'Something went wrong') => {
+    const detail = data && data.detail !== undefined ? data.detail : data;
+    if (Array.isArray(detail)) {
+        return detail.map(d => {
+            const field = (d.loc || []).filter(x => x !== 'body' && x !== 'query' && x !== 'form').join('.');
+            const msg = d.type === 'string_pattern_mismatch'
+                ? (field === 'username' ? 'use 3–32 letters, numbers, _ . -' : 'use only letters, numbers and _ . : -')
+                : (d.msg || 'is invalid').replace(/^Value error, /, '');
+            return field ? `${field.replace(/_/g, ' ')}: ${msg}` : msg;
+        }).join('; ');
+    }
+    if (typeof detail === 'string' && detail) return detail;
+    return fallback;
+};
+
 const App = {
     state: {
         token: localStorage.getItem('token') || null,
@@ -39,7 +56,7 @@ const App = {
                     this.logout();
                     return;
                 }
-                throw new Error(data.detail || data || 'API Error');
+                throw new Error(errorText(data, `Request failed (${res.status})`));
             }
             console.log(`[API] ${method} ${endpoint} → 200`, data);
             return data;
@@ -310,9 +327,9 @@ const App = {
                 headers: { 'Authorization': `Bearer ${this.state.token}` },
                 body: formData,
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
             console.log('[Scan] result:', data);
-            if (!res.ok) throw new Error(data.detail || 'Scan failed');
+            if (!res.ok) throw new Error(errorText(data, `HTTP ${res.status}`));
             if (data.error) throw new Error(data.error);
 
             this._renderScanResults(data);
@@ -701,8 +718,8 @@ const App = {
                 headers: { 'Authorization': `Bearer ${this.state.token}` },
                 body: formData,
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Upload failed');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(errorText(data, `HTTP ${res.status}`));
 
             customInput.value = data.path;
             this.toast('File uploaded! Press Start to stream.', 'success');
