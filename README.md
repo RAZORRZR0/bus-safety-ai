@@ -6,7 +6,9 @@ AI video monitoring for city buses. It watches a camera feed or uploaded clip, d
 
 Final-year project.FastAPI backend, PyTorch models, YOLO person tracking, and a web dashboard.
 
-![Model comparison](research_plots/plot2_metric_comparison.png)
+| Live alerts | Trust scores per bus, route and timeslot |
+|---|---|
+| ![Alert feed](docs/screenshots/alerts.jpg) | ![Trust matrix](docs/screenshots/trust.jpg) |
 
 ## What it does
 
@@ -45,11 +47,20 @@ Trained and tested on the Bus Violence benchmark (1,400 clips filmed inside a mo
 
 | Model | Params | Accuracy | Precision | Recall | F1 |
 |---|---|---|---|---|---|
-| MobileNetV2 + temporal mean-pool | 2.2 M | 77.1% | 77.2% | 77.1% | 77.3% |
-| Integrated 2D-3D CNN | 1.1 M | 76.8% | 77.0% | 76.8% | 77.0% |
-| **Temporal Pyramid Network** | 13.0 M | **80.7%** | **79.9%** | **82.1%** | **81.0%** |
+| MobileNetV2 + temporal mean-pool | 2.2 M | 77.5% | 76.6% | 79.3% | 77.9% |
+| Integrated 2D-3D CNN | 1.1 M | 77.1% | 76.8% | 77.9% | 77.3% |
+| **Temporal Pyramid Network** | 13.0 M | **81.1%** | **80.9%** | **81.4%** | **81.1%** |
 
-The TPN is the default. Training code: [train_violence.py](train_violence.py). Plots: [research_plots/](research_plots/).
+Measured with [scripts/evaluate.py](scripts/evaluate.py) on CPU (raw output: [metrics.json](research_plots/metrics.json)). The TPN gets 114 of 140 violent clips and 113 of 140 normal clips right.
+
+![Model comparison](research_plots/plot2_metric_comparison.png)
+
+The TPN is the default. Training code: [train_violence.py](train_violence.py). To reproduce the table, put the dataset in `bus-violence/` and run:
+
+```bash
+python scripts/evaluate.py     # writes research_plots/metrics.json
+python generate_plots.py       # redraws the plots from it
+```
 
 ## Run it
 
@@ -105,8 +116,10 @@ The dataset is not in this repo. Get it from its authors:
 Other papers this work draws on:
 
 - J. Barthelemy et al., *Safety After Dark: A Privacy Compliant and Real-Time Edge Computing Intelligent Video Analytics for Safer Public Transportation*, Sensors 24(24), 2024. [doi:10.3390/s24248102](https://doi.org/10.3390/s24248102)
-- Scientific Reports, 2025. [doi:10.1038/s41598-025-12531-4](https://doi.org/10.1038/s41598-025-12531-4)
-- Mathematics 13, 2025. [doi:10.3390/math13172665](https://doi.org/10.3390/math13172665)
+- W. Getsopon et al., *Int.2D-3D-CNN: Integrated 2D and 3D Convolutional Neural Networks for Video Violence Recognition*, Mathematics 13(16), 2025. [doi:10.3390/math13162665](https://doi.org/10.3390/math13162665)
+- B. Qi et al., *Automated violence monitoring system for real-time fistfight detection using deep learning-based temporal action localization*, Scientific Reports 15, 2025. [doi:10.1038/s41598-025-12531-4](https://doi.org/10.1038/s41598-025-12531-4)
+
+The full write-up is in [docs/research_paper.md](docs/research_paper.md).
 
 ## Limitations
 

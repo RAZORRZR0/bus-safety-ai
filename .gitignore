@@ -22,3 +22,4 @@ dataset/
 research_papers/
 *.log
 .pytest_cache/
+.claude/
