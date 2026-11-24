@@ -55,6 +55,8 @@ retrain_service = RetrainService(inference_service)
 feedback_service = FeedbackService(retrain_service=retrain_service)
 
 _stream_cancel = threading.Event()
+# Files the dashboard uploaded for streaming; /stream/live only opens these, cameras and rtsp:// URLs.
+_uploaded_streams: set[str] = set()
 
 
 def _extract_token(auth_header: str | None) -> str:
@@ -68,13 +70,12 @@ def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
 ) -> User:
     token = _extract_token(authorization)
-    username = decode_access_token(token)
-    user = session.exec(select(User).where(User.username == username)).first()
+    claims = decode_access_token(token)
+    user = session.exec(select(User).where(User.username == claims["sub"])).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found.")
-    # 2FA check disabled for testing
-    # if not user.twofa_verified:
-    #     raise HTTPException(status_code=403, detail="2FA verification required.")
+    if not claims.get("mfa"):
+        raise HTTPException(status_code=403, detail="2FA verification required.")
     return user
 
 
@@ -249,6 +250,7 @@ async def upload_stream_file(
         data = await file.read()
         tmp.write(data)
         tmp_path = tmp.name
+    _uploaded_streams.add(tmp_path)
     
     logger.info("Stream file uploaded: %s", tmp_path)
     return {"path": tmp_path, "filename": file.filename}
@@ -257,6 +259,8 @@ async def upload_stream_file(
 @router.get("/stream/live")
 def stream_live(source: str = "0"):
     """MJPEG stream with YOLO annotations. source=0 for webcam, or a file/RTSP path."""
+    if not (source.isdigit() or source.startswith("rtsp://") or source in _uploaded_streams):
+        raise HTTPException(400, "Source must be a camera index, an rtsp:// URL or an uploaded file.")
     _stream_cancel.clear()
     cam_source = int(source) if source.isdigit() else source
 
@@ -335,6 +339,11 @@ def register(payload: RegisterRequest, session: Annotated[Session, Depends(get_s
     existing = session.exec(select(User).where(User.username == payload.username)).first()
     if existing:
         raise HTTPException(status_code=409, detail="Username already exists.")
+    if payload.role not in {"admin", "operator"}:
+        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'operator'.")
+    # Only the very first account may self-register as admin.
+    if payload.role == "admin" and session.exec(select(User)).first() is not None:
+        raise HTTPException(status_code=403, detail="Only the first user can register as admin.")
     secret = generate_2fa_secret()
     user = User(
         username=payload.username,
@@ -360,16 +369,14 @@ def login(payload: LoginRequest, session: Annotated[Session, Depends(get_session
     user = session.exec(select(User).where(User.username == payload.username)).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials.")
-    user.twofa_verified = True  # Auto-verify for testing
-    session.add(user)
-    session.commit()
-    token = create_access_token(user.username)
-    return {"access_token": token, "token_type": "bearer"}
+    needs_2fa = settings.require_2fa
+    token = create_access_token(user.username, mfa=not needs_2fa)
+    return {"access_token": token, "token_type": "bearer", "twofa_required": needs_2fa}
 
 
 @router.post("/auth/verify-2fa")
 def verify_2fa(payload: Verify2FARequest, session: Annotated[Session, Depends(get_session)]):
-    username = decode_access_token(payload.token)
+    username = decode_access_token(payload.token)["sub"]
     user = session.exec(select(User).where(User.username == username)).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found.")
@@ -378,7 +385,7 @@ def verify_2fa(payload: Verify2FARequest, session: Annotated[Session, Depends(ge
     user.twofa_verified = True
     session.add(user)
     session.commit()
-    return {"verified": True}
+    return {"verified": True, "access_token": create_access_token(user.username, mfa=True)}
 
 
 @router.post("/ingest/event")

@@ -48,7 +48,11 @@ const App = {
     async login(username, password) {
         try {
             const data = await this.api('/auth/login', 'POST', { username, password }, false);
-            // 2FA disabled for testing — go straight in
+            if (data.twofa_required) {
+                this.state.tempToken = data.access_token;
+                this.showAuthStep('2fa');
+                return;
+            }
             this.state.token = data.access_token;
             localStorage.setItem('token', this.state.token);
             this.init();
@@ -57,15 +61,9 @@ const App = {
 
     async verify2FA(code) {
         try {
-            // Temporarily set token for this request if needed, or send as body. 
-            // The protocol expects 'token' in the body for /verify-2fa based on original code.
-            // Wait, original routes.py /verify-2fa takes {token: "jwt", code: "otp"}.
-
             const payload = { token: this.state.tempToken, code };
-            await this.api('/auth/verify-2fa', 'POST', payload, false);
-
-            // Success
-            this.state.token = this.state.tempToken;
+            const data = await this.api('/auth/verify-2fa', 'POST', payload, false);
+            this.state.token = data.access_token;
             localStorage.setItem('token', this.state.token);
             this.state.tempToken = null;
             this.init();

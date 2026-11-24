@@ -12,3 +12,13 @@ bus-violence.zip
 test_bench.py
 benchmark_models.py
 kaggle_benchmark.py
+
+# Large artifacts: weights come from the GitHub Release, data from the dataset's own site
+models/*.pth
+models/*.onnx
+*.pt
+bus-violence/
+dataset/
+research_papers/
+*.log
+.pytest_cache/

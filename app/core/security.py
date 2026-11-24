@@ -19,19 +19,19 @@ def verify_password(password: str, hashed: str) -> bool:
     return pwd_context.verify(password, hashed)
 
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, mfa: bool = True) -> str:
+    """`mfa` marks whether the second factor was passed; only such tokens open the API."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.token_exp_minutes)
-    payload = {"sub": subject, "exp": expire}
+    payload = {"sub": subject, "exp": expire, "mfa": mfa}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> str:
+def decode_access_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-        sub = payload.get("sub")
-        if not sub:
+        if not payload.get("sub"):
             raise ValueError("Missing sub claim.")
-        return str(sub)
+        return payload
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token."

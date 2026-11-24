@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+evidence
+models/*.pth
+*.pt
+bus-violence
+dataset
+transport.db
