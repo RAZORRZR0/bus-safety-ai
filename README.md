@@ -6,9 +6,7 @@ AI video monitoring for city buses. It watches a camera feed or uploaded clip, d
 
 Final-year project.FastAPI backend, PyTorch models, YOLO person tracking, and a web dashboard.
 
-| Live alerts | Trust scores per bus, route and timeslot |
-|---|---|
-| ![Alert feed](docs/screenshots/alerts.jpg) | ![Trust matrix](docs/screenshots/trust.jpg) |
+![Demo: log in, scan a bus CCTV clip, get a critical alert and lower trust scores](docs/demo.gif)
 
 ## What it does
 
@@ -84,7 +82,7 @@ Open <http://127.0.0.1:8000/dashboard>, register (the first account may be `admi
 
 Settings come from environment variables: see [.env.example](.env.example). Set `REQUIRE_2FA=false` for a quick local demo.
 
-**Live demo** (Hugging Face Spaces): create a Docker Space and upload the two files in [deploy/huggingface/](deploy/huggingface/). The image builds from this repo, runs in demo mode (`DEMO_MODE=true`: a `demo` operator login and a sample fleet), and uses the nano YOLO model to stay fast on the free CPU tier. Set `JWT_SECRET` as a Space secret.
+**Demo mode**: set `DEMO_MODE=true` to seed a `demo` operator login and a sample fleet (the login page shows the credentials). [deploy/huggingface/](deploy/huggingface/) has a ready Dockerfile for a Hugging Face Docker Space (needs a paid HF plan) that builds from this repo in demo mode. The app needs about 2 GB of RAM because of PyTorch.
 
 ## Tests
 
