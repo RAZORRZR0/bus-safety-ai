@@ -26,11 +26,12 @@
       <div id="login-step">
         <div class="form-group">
           <label>Username</label>
-          <input type="text" id="logUser" placeholder="Enter your username">
+          <input type="text" id="logUser" placeholder="Enter your username" autocomplete="username">
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input type="password" id="logPass" placeholder="Enter your password">
+          <input type="password" id="logPass" placeholder="Enter your password" autocomplete="current-password"
+            onkeydown="if (event.key === 'Enter') App.login(logUser.value, logPass.value)">
         </div>
         <button class="btn btn-primary w-full" onclick="App.login(logUser.value, logPass.value)">Sign In</button>
         <div class="mt-4 text-center">
@@ -44,7 +45,7 @@
       <div id="2fa-step" class="hidden">
         <p class="text-center mb-4">Enter your 2FA verification code</p>
         <div class="form-group">
-          <input type="text" id="otp" placeholder="000 000"
+          <input type="text" id="otp" placeholder="000000" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
             style="text-align:center; padding: 1rem; letter-spacing: 5px; font-size: 1.2rem;">
         </div>
         <button class="btn btn-primary w-full" onclick="App.verify2FA(otp.value)">Verify</button>
@@ -54,11 +55,11 @@
       <div id="register-step" class="hidden">
         <div class="form-group">
           <label>Username</label>
-          <input type="text" id="regUser" placeholder="Choose a username">
+          <input type="text" id="regUser" placeholder="3–32 letters, numbers, _ . -" autocomplete="username">
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input type="password" id="regPass" placeholder="Create a password">
+          <input type="password" id="regPass" placeholder="At least 8 characters" autocomplete="new-password">
         </div>
         <div class="form-group">
           <label>Role</label>
@@ -611,7 +612,7 @@
     </main>
   </div>
 
-  <script src="/static/js/app.js?v=6"></script>
+  <script src="/static/js/app.js?v=7"></script>
 </body>
 
 </html>

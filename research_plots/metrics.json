@@ -1,0 +1,50 @@
+[
+  {
+    "checkpoint": "legacy_mobilenetv2.pth",
+    "model_type": "legacy",
+    "test_clips": 280,
+    "accuracy": 0.775,
+    "precision": 0.7655172413793103,
+    "recall": 0.7928571428571428,
+    "f1": 0.7789473684210526,
+    "confusion": {
+      "tp": 111,
+      "fn": 29,
+      "fp": 34,
+      "tn": 106
+    },
+    "params_m": 2.225153
+  },
+  {
+    "checkpoint": "int2d-3d-cnn.pth",
+    "model_type": "int2d3d",
+    "test_clips": 280,
+    "accuracy": 0.7714285714285715,
+    "precision": 0.7676056338028169,
+    "recall": 0.7785714285714286,
+    "f1": 0.7730496453900709,
+    "confusion": {
+      "tp": 109,
+      "fn": 31,
+      "fp": 33,
+      "tn": 107
+    },
+    "params_m": 1.067361
+  },
+  {
+    "checkpoint": "temporal_pyramid_network.pth",
+    "model_type": "tpn",
+    "test_clips": 280,
+    "accuracy": 0.8107142857142857,
+    "precision": 0.8085106382978723,
+    "recall": 0.8142857142857143,
+    "f1": 0.8113879003558719,
+    "confusion": {
+      "tp": 114,
+      "fn": 26,
+      "fp": 27,
+      "tn": 113
+    },
+    "params_m": 13.012545
+  }
+]

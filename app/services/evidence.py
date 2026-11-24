@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,7 +15,8 @@ def hash_bytes(data: bytes) -> str:
 def persist_evidence(bus_id: str, raw: bytes) -> tuple[str, str]:
     digest = hash_bytes(raw)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    filename = f"{ts}_{bus_id}_{digest[:12]}.bin"
+    safe_bus = re.sub(r"[^A-Za-z0-9_-]", "_", bus_id)[:64]  # never let an ID become a path
+    filename = f"{ts}_{safe_bus}_{digest[:12]}.bin"
     path = EVIDENCE_DIR / filename
     path.write_bytes(raw)
     return str(path), digest

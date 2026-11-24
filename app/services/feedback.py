@@ -64,28 +64,23 @@ class FeedbackService:
         """
         # Event reference ID might end with a file extension from a manual scan, or it might be raw
         ref_id = payload.event_reference_id
-        search_key = ref_id
-        
         if ref_id.isdigit():
-            # It's an alert/event ID from the live ingest
+            # Alert/event ID from live ingest: find the evidence saved for that event.
             event = session.get(ViolationEvent, int(ref_id))
-            if event and event.evidence_hash:
-                search_key = event.evidence_hash[:12]
-            else:
-                logger.warning(f"No evidence hash found for event id '{ref_id}'")
+            if not event or not event.evidence_hash:
+                logger.warning("No evidence hash found for event id '%s'", ref_id)
                 return
-        
-        # Searching best match in evidence directory
-        found_file = None
-        for file in self.evidence_dir.glob("*"):
-            if search_key in file.name:
-                found_file = file
-                break
-        
-        if not found_file or not found_file.exists():
-            logger.warning(f"No evidence found to copy for search key '{search_key}'")
+            key = event.evidence_hash[:12]
+            matches = [f for f in self.evidence_dir.glob("*.bin") if f.stem.endswith("_" + key)]
+            found_file = matches[0] if matches else None
+        else:
+            # Manual scan file name; exact match only (format is checked by the request model).
+            found_file = self.evidence_dir / ref_id
+
+        if not found_file or not found_file.is_file():
+            logger.warning("No evidence found to copy for reference '%s'", ref_id)
             return
-        
+
         # Determine correct destination
         # If user says violence_false_positive is `incorrect` -> Actually NO Violence
         # If user says violence_false_negative is `incorrect` -> Actually Violence

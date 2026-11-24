@@ -63,6 +63,18 @@ FINAL_RESULTS = {
     },
 }
 
+# Prefer measured numbers from scripts/evaluate.py over the values above.
+_LABELS = {"legacy": "Legacy MobileNetV2", "int2d3d": "Int. 2D-3D CNN", "tpn": "Temporal Pyramid\nNetwork"}
+_METRICS_FILE = OUTPUT_DIR / "metrics.json"
+TPN_CONFUSION = None
+if _METRICS_FILE.exists():
+    _measured = json.loads(_METRICS_FILE.read_text())
+    FINAL_RESULTS = {
+        _LABELS[m["model_type"]]: {k: m[k] for k in ("accuracy", "precision", "recall", "f1", "params_m")}
+        for m in _measured
+    }
+    TPN_CONFUSION = next((m["confusion"] for m in _measured if m["model_type"] == "tpn"), None)
+
 # ─── Shared styling ─────────────────────────────────────────────────────────
 COLORS = {
     "legacy": "#4C72B0",
@@ -202,10 +214,14 @@ def plot_efficiency():
 def plot_confusion_matrix():
     # Derive values from Precision/Recall: TP=115, FP=29, FN=25, TN=111
     # (from 280 test clips, V=140, NV=140)
-    TP = round(0.8214 * 140)    # True Violence detected correctly
-    FN = 140 - TP               # Violence missed
-    TN = round(140 - TP * (1 - 0.7986) / 0.7986)  # TN from precision
-    FP = 140 - TN
+    if TPN_CONFUSION:
+        TP, FN, FP, TN = (TPN_CONFUSION[k] for k in ("tp", "fn", "fp", "tn"))
+    else:
+        TP = round(0.8214 * 140)    # True Violence detected correctly
+        FN = 140 - TP               # Violence missed
+        TN = round(140 - TP * (1 - 0.7986) / 0.7986)  # TN from precision
+        FP = 140 - TN
+    total = TP + FN + FP + TN
 
     cm = np.array([[TP, FN],
                    [FP, TN]])
@@ -214,7 +230,7 @@ def plot_confusion_matrix():
     im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    ax.set_title("Confusion Matrix — Temporal Pyramid Network\n(Best Model, Test Set, n=280)", fontsize=12, fontweight="bold")
+    ax.set_title(f"Confusion Matrix — Temporal Pyramid Network\n(Best Model, Test Set, n={total})", fontsize=12, fontweight="bold")
     ax.set_xticks([0, 1])
     ax.set_yticks([0, 1])
     ax.set_xticklabels(["Predicted\nViolent", "Predicted\nNon-Violent"])
@@ -225,15 +241,10 @@ def plot_confusion_matrix():
     thresh = cm.max() / 2.0
     for i in range(2):
         for j in range(2):
-            text = f"{cm[i,j]}\n({cm[i,j]/280*100:.1f}%)"
+            text = f"{[['TP', 'FN'], ['FP', 'TN']][i][j]}: {cm[i,j]}\n({cm[i,j]/total*100:.1f}%)"
             color = "white" if cm[i, j] > thresh else "black"
             ax.text(j, i, text, ha="center", va="center", fontsize=13, color=color, fontweight="bold")
 
-    # Labels
-    ax.text(0, 0, f"\nTP", ha="center", va="top", fontsize=8, color="gray")
-    ax.text(1, 0, f"\nFN", ha="center", va="top", fontsize=8, color="gray")
-    ax.text(0, 1, f"\nFP", ha="center", va="top", fontsize=8, color="gray")
-    ax.text(1, 1, f"\nTN", ha="center", va="top", fontsize=8, color="gray")
 
     plt.tight_layout()
     path = OUTPUT_DIR / "plot4_confusion_matrix.png"

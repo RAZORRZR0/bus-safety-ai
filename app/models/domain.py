@@ -1,8 +1,14 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
+from pydantic import Field as PField
 from sqlmodel import Field, SQLModel
+
+# IDs end up in file names, HTML and onclick handlers, so keep them to a safe alphabet.
+ID_PATTERN = r"^[A-Za-z0-9_.:\-]{1,64}$"
+Ident = Annotated[str, StringConstraints(pattern=ID_PATTERN)]
+ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 def utc_now() -> datetime:
@@ -29,19 +35,19 @@ class Route(SQLModel, table=True):
 
 
 class BusCreate(BaseModel):
-    bus_id: str
-    route_id: str
-    capacity: int
-    model: str
-    year: int
+    bus_id: Ident
+    route_id: Ident
+    capacity: int = PField(gt=0, le=500)
+    model: ShortText
+    year: int = PField(ge=1950, le=2100)
 
 
 class RouteCreate(BaseModel):
-    route_id: str
-    name: str
-    start_location: str
-    end_location: str
-    distance_km: float
+    route_id: Ident
+    name: ShortText
+    start_location: ShortText
+    end_location: ShortText
+    distance_km: float = PField(ge=0, le=10000)
 
 
 class User(SQLModel, table=True):
@@ -89,30 +95,30 @@ class TrustScore(SQLModel, table=True):
 
 
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
+    username: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.\-]{3,32}$")]
+    password: Annotated[str, StringConstraints(min_length=8, max_length=128)]
     role: str = "operator"
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: Annotated[str, StringConstraints(max_length=64)]
+    password: Annotated[str, StringConstraints(max_length=128)]
 
 
 class Verify2FARequest(BaseModel):
-    token: str
-    code: str
+    token: Annotated[str, StringConstraints(max_length=2048)]
+    code: Annotated[str, StringConstraints(pattern=r"^\d{6}$")]
 
 
 class EventIngestRequest(BaseModel):
-    bus_id: str
-    route_id: str
-    timeslot: str
-    reserved_seats_total: int
-    reserved_seats_occupied: int
+    bus_id: Ident
+    route_id: Ident
+    timeslot: Ident
+    reserved_seats_total: int = PField(ge=0, le=100)
+    reserved_seats_occupied: int = PField(ge=0, le=100)
     special_category_present: bool
-    aggression_score: float
-    model_confidence: float = 0.9
+    aggression_score: float = PField(ge=0.0, le=1.0)
+    model_confidence: float = PField(default=0.9, ge=0.0, le=1.0)
 
 
 class Feedback(SQLModel, table=True):
@@ -126,8 +132,8 @@ class Feedback(SQLModel, table=True):
 
 
 class FeedbackSubmitRequest(BaseModel):
-    event_reference_id: str
-    feedback_type: str
+    event_reference_id: Annotated[str, StringConstraints(pattern=r"^(\d{1,12}|manual_[0-9a-f]{12}\.[A-Za-z0-9]{1,5})$")]
+    feedback_type: Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,64}$")]
     is_correct: bool
-    comments: Optional[str] = None
+    comments: Optional[Annotated[str, StringConstraints(max_length=1000)]] = None
 
