@@ -1,6 +1,6 @@
 # Transport Policing System
 
-[![CI](https://github.com/RAZORRZR0/TransportModels/actions/workflows/ci.yml/badge.svg)](https://github.com/RAZORRZR0/TransportModels/actions/workflows/ci.yml)
+[![CI](https://github.com/RAZORRZR0/bus-safety-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/RAZORRZR0/bus-safety-ai/actions/workflows/ci.yml)
 
 AI video monitoring for city buses. It watches a camera feed or uploaded clip, detects **violence** and **reserved-seat misuse**, raises alerts, keeps a **tamper-evident evidence trail**, and scores every bus, route and timeslot on how safe it has been.
 
@@ -55,7 +55,7 @@ Measured with [scripts/evaluate.py](scripts/evaluate.py) on CPU (raw output: [me
 
 ![Model comparison](research_plots/plot2_metric_comparison.png)
 
-The TPN is the default. Training code: [train_violence.py](train_violence.py). To reproduce the table, put the dataset in `bus-violence/` and run:
+The TPN is the default. Training code: [train_violence.py](train_violence.py) (Bus Violence train/test split) and [kaggle_train_violence.py](kaggle_train_violence.py) (multi-dataset variant for Kaggle GPUs). To reproduce the table, put the dataset in `bus-violence/` and run:
 
 ```bash
 python scripts/evaluate.py     # writes research_plots/metrics.json
@@ -67,8 +67,8 @@ python generate_plots.py       # redraws the plots from it
 **Docker**
 
 ```bash
-docker build -t transport-policing .
-docker run -p 8000:8000 -e JWT_SECRET=change-me transport-policing
+docker build -t bus-safety-ai .
+docker run -p 8000:8000 -e JWT_SECRET=change-me bus-safety-ai
 ```
 
 **Locally** (Python 3.12)
