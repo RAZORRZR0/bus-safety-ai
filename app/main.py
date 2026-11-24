@@ -4,12 +4,16 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
-from app.storage.db import init_db
+from app.core.config import settings
+from app.storage.db import engine, init_db
+from app.storage.demo import seed_demo
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    if settings.demo_mode:
+        seed_demo(engine)
     yield
 
 

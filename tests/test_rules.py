@@ -57,3 +57,21 @@ def test_evidence_filename_cannot_escape_the_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence, "EVIDENCE_DIR", tmp_path)
     path, _ = evidence.persist_evidence("../../evil", b"data")
     assert Path(path).parent == tmp_path
+
+
+def test_demo_seed_takes_admin_slot_and_is_idempotent(tmp_path):
+    from sqlmodel import Session, SQLModel, create_engine, select
+
+    from app.core.security import verify_password
+    from app.models.domain import Bus, User
+    from app.storage.demo import DEMO_PASSWORD, seed_demo
+
+    engine = create_engine(f"sqlite:///{tmp_path}/demo.db")
+    SQLModel.metadata.create_all(engine)
+    seed_demo(engine)
+    seed_demo(engine)
+    with Session(engine) as s:
+        users = {u.username: u for u in s.exec(select(User)).all()}
+        assert users["admin"].role == "admin" and users["demo"].role == "operator"
+        assert verify_password(DEMO_PASSWORD, users["demo"].password_hash)
+        assert len(s.exec(select(Bus)).all()) == 3

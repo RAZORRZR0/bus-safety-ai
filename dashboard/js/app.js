@@ -130,6 +130,10 @@ const App = {
         document.getElementById('auth-view').classList.remove('hidden');
         document.getElementById('app-view').classList.add('hidden');
         this.showAuthStep('login');
+        fetch('/health').then(r => r.json()).then(h => {
+            const hint = document.getElementById('demo-hint');
+            if (hint) hint.classList.toggle('hidden', !h.demo);
+        }).catch(() => {});
     },
 
     showAuthStep(step) {

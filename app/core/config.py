@@ -22,6 +22,8 @@ class Settings(BaseModel):
     jwt_algorithm: str = "HS256"
     token_exp_minutes: int = int(os.getenv("TOKEN_EXP_MINUTES", "120"))
     require_2fa: bool = os.getenv("REQUIRE_2FA", "true").lower() != "false"
+    # Public demo: seeds an operator login and sample fleet; admin gets a random password.
+    demo_mode: bool = os.getenv("DEMO_MODE", "false").lower() == "true"
     db_url: str = os.getenv("DB_URL", "sqlite:///transport.db")
     yolo_model_path: str = os.getenv("YOLO_MODEL", "yolo26m.pt")
     yolo_conf_threshold: float = 0.5

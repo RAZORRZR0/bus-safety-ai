@@ -9,7 +9,7 @@ EVENT = {
 
 def test_health_and_security_headers(client):
     r = client.get("/health")
-    assert r.json() == {"status": "ok"}
+    assert r.json() == {"status": "ok", "demo": False}
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert r.headers["X-Frame-Options"] == "DENY"
 

@@ -150,7 +150,7 @@ def require_admin(user: Annotated[User, Depends(get_current_user)]) -> User:
 
 @router.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "demo": settings.demo_mode}
 
 
 @router.get("/")

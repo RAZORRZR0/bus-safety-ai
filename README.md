@@ -84,6 +84,8 @@ Open <http://127.0.0.1:8000/dashboard>, register (the first account may be `admi
 
 Settings come from environment variables: see [.env.example](.env.example). Set `REQUIRE_2FA=false` for a quick local demo.
 
+**Live demo** (Hugging Face Spaces): create a Docker Space and upload the two files in [deploy/huggingface/](deploy/huggingface/). The image builds from this repo, runs in demo mode (`DEMO_MODE=true`: a `demo` operator login and a sample fleet), and uses the nano YOLO model to stay fast on the free CPU tier. Set `JWT_SECRET` as a Space secret.
+
 ## Tests
 
 ```bash

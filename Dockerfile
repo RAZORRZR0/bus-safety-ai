@@ -15,4 +15,5 @@ RUN sh scripts/download_models.sh && mkdir -p data
 
 ENV DB_URL=sqlite:////app/data/transport.db
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# PORT lets hosts like Hugging Face Spaces (7860) pick the port.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
