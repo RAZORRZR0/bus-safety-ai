@@ -17,6 +17,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+
+from app.core.config import settings
+
 try:
     from sklearn.metrics import precision_score, recall_score, f1_score
     _HAS_SKLEARN = True
@@ -26,7 +29,6 @@ except ImportError:
 logger = logging.getLogger("transport.retrain")
 
 FEEDBACK_DIR = Path("dataset/feedback")
-MODEL_PATH = Path("models/violence_classifier.pth")
 
 FRAMES_PER_CLIP = 16
 IMG_SIZE = 112
@@ -149,8 +151,11 @@ class RetrainService:
             loader = DataLoader(ds, batch_size=FINETUNE_BATCH, shuffle=True, num_workers=0)
 
             # Load current model weights as starting point
-            if not MODEL_PATH.exists():
-                logger.warning("No base model at %s, cannot retrain", MODEL_PATH)
+            base_path = Path(settings.violence_model_path)
+            # Fine-tune into a separate file so a bad run never overwrites the shipped model.
+            out_path = base_path if base_path.name.startswith("finetuned_") else base_path.with_name("finetuned_" + base_path.name)
+            if not base_path.exists():
+                logger.warning("No base model at %s, cannot retrain", base_path)
                 self._last_result = "skipped: no base model"
                 return
 
@@ -163,7 +168,7 @@ class RetrainService:
                 # Fallback to a real torch device if inferencing was on CPU ONNX
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 
-            ckpt = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
+            ckpt = torch.load(base_path, map_location="cpu", weights_only=False)
 
             model_type = ckpt.get("model_type", "legacy")
             if model_type == "int2d3d":
@@ -213,11 +218,12 @@ class RetrainService:
             ckpt["model_state_dict"] = model.state_dict()
             ckpt["finetuned"] = True
             ckpt["finetune_examples"] = len(ds)
-            torch.save(ckpt, MODEL_PATH)
-            logger.info("Saved fine-tuned PyTorch model → %s", MODEL_PATH)
+            torch.save(ckpt, out_path)
+            settings.violence_model_path = str(out_path)
+            logger.info("Saved fine-tuned PyTorch model → %s", out_path)
 
             # Export to ONNX for accelerated inference
-            onnx_path = MODEL_PATH.with_suffix(".onnx")
+            onnx_path = out_path.with_suffix(".onnx")
             try:
                 model.eval()
                 # Create a sample input tensor (batch_size=1, time=16, channels=3, h=112, w=112)

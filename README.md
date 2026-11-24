@@ -20,7 +20,7 @@ Final-year project.FastAPI backend, PyTorch models, YOLO person tracking, and a 
 | Trust scores | Each event lowers a 0–100 score for its bus, route and timeslot, so operators see where to send staff |
 | Evidence integrity | Every clip is SHA-256 hashed; every action is appended to a hash chain, so any edit breaks the chain |
 | Feedback loop | Operators mark false positives/negatives; the violence model fine-tunes on them in the background |
-| Security | JWT auth, TOTP two-factor login, `admin` / `operator` roles |
+| Security | JWT + TOTP two-factor login, `admin` / `operator` roles, login throttling, input validation, upload limits, scoped short-lived stream tokens |
 | Live mode | Webcam, RTSP or uploaded video streamed back as annotated MJPEG |
 
 ## Architecture
@@ -91,7 +91,16 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-The tests cover the login and 2FA flow, role rules, event ingestion → alert → trust score, the severity rules, and audit-chain tamper detection. They run on every push in GitHub Actions.
+The 19 tests cover login and 2FA, login throttling, role checks, input validation (IDs that try HTML or file paths are rejected), upload limits, stream tokens, event ingestion → alert → trust score, the severity rules, and audit-chain tamper detection. They run on every push in GitHub Actions.
+
+## Security notes
+
+- A password alone gets a 5-minute token that can only finish 2FA. Only a token from the 2FA step can call the API.
+- The live stream uses a separate 60-second token, because an `<img>` tag can't send an `Authorization` header. That token can't call the API.
+- Bus, route and timeslot IDs are limited to letters, digits and `_ . : -`, so they can't break HTML or become file paths. The dashboard also escapes all server data.
+- Changing models or ROI, deleting fleet data and reading the audit chain are admin-only.
+- `/admin/audit-chain` recomputes every hash and reports the first tampered entry.
+- Fine-tuning from feedback writes a new `finetuned_*.pth` and never overwrites the shipped model.
 
 ## API (main endpoints)
 
@@ -99,7 +108,7 @@ The tests cover the login and 2FA flow, role rules, event ingestion → alert �
 |---|---|---|
 | POST | `/auth/register`, `/auth/login`, `/auth/verify-2fa` | Accounts and two-step login |
 | POST | `/scan/video` | Run all models on an uploaded clip |
-| GET | `/stream/live?source=0` | Annotated live stream |
+| POST, GET | `/stream/token`, `/stream/live?source=0&token=…` | Annotated live stream |
 | POST | `/ingest/event`, `/ingest/frame` | Push events or frames from a bus |
 | GET | `/alerts`, `/events`, `/trust/overview` | Dashboard data |
 | POST | `/feedback` | Correct a prediction (feeds retraining) |

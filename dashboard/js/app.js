@@ -2,6 +2,10 @@
  * Transport Policing Dashboard - Core Logic
  */
 
+// Escape server data before it goes into innerHTML (bus IDs, route names, errors, ...).
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 const App = {
     state: {
         token: localStorage.getItem('token') || null,
@@ -16,7 +20,8 @@ const App = {
         const headers = { 'Content-Type': 'application/json' };
         if (token && this.state.token) headers['Authorization'] = `Bearer ${this.state.token}`;
 
-        console.log(`[API] ${method} ${endpoint}`, body || '');
+        // Never log request bodies: they include passwords and 2FA codes.
+        console.log(`[API] ${method} ${endpoint}`);
         try {
             const res = await fetch(endpoint, {
                 method,
@@ -74,13 +79,15 @@ const App = {
         try {
             const data = await this.api('/auth/register', 'POST', { username, password, role }, false);
             document.getElementById('reg-out').innerHTML =
-                `<div class="alert badge-safe">Registered! Secret: ${data.twofa_secret}</div>`;
+                `<div class="alert badge-safe">Registered! Add this 2FA secret to your authenticator app: ${esc(data.twofa_secret)}</div>`;
         } catch (e) {
-            document.getElementById('reg-out').innerHTML = `<div class="badge badge-danger">${e.message}</div>`;
+            document.getElementById('reg-out').innerHTML = `<div class="badge badge-danger">${esc(e.message)}</div>`;
         }
     },
 
     logout() {
+        clearInterval(this.state.refreshInterval);  // stop polling the API without a token
+        this.state.refreshInterval = null;
         this.state.token = null;
         this.state.user = null;
         localStorage.removeItem('token');
@@ -151,20 +158,20 @@ const App = {
                 <div class="card card-outlined flex justify-between items-center" style="margin-bottom: 0.5rem; padding: 0.875rem 1rem;">
                     <div>
                         <div class="flex items-center gap-2">
-                            <span class="badge badge-${this.getSeverityClass(a.severity)}">${a.severity}</span>
-                            <span style="font-weight: 500; font-size:0.875rem;">Bus ${a.bus_id}</span>
+                            <span class="badge badge-${this.getSeverityClass(a.severity)}">${esc(a.severity)}</span>
+                            <span style="font-weight: 500; font-size:0.875rem;">Bus ${esc(a.bus_id)}</span>
                             <small>${new Date(a.created_at).toLocaleTimeString()}</small>
                         </div>
-                        <div style="margin-top:0.25rem; font-size: 0.8125rem; color: var(--md-on-surface-variant)">Route: ${a.route_id} | Status: ${a.status}</div>
+                        <div style="margin-top:0.25rem; font-size: 0.8125rem; color: var(--md-on-surface-variant)">Route: ${esc(a.route_id)} | Status: ${esc(a.status)}</div>
                     </div>
                     <div class="flex gap-2">
-                        <button class="btn btn-sm btn-outline" style="padding: 0 0.5rem;" title="Mark True Positive" onclick="App.submitFeedback('${a.violation_event_id}', true, 'alert_violence_true')">
+                        <button class="btn btn-sm btn-outline" style="padding: 0 0.5rem;" title="Mark True Positive" onclick="App.submitFeedback('${Number(a.violation_event_id)}', true, 'alert_violence_true')">
                             <span class="material-symbols-outlined" style="font-size:16px; color:#22c55e">thumb_up</span>
                         </button>
-                        <button class="btn btn-sm btn-outline" style="padding: 0 0.5rem;" title="Mark False Positive" onclick="App.submitFeedback('${a.violation_event_id}', false, 'alert_violence_false')">
+                        <button class="btn btn-sm btn-outline" style="padding: 0 0.5rem;" title="Mark False Positive" onclick="App.submitFeedback('${Number(a.violation_event_id)}', false, 'alert_violence_false')">
                             <span class="material-symbols-outlined" style="font-size:16px; color:#ef4444">thumb_down</span>
                         </button>
-                        ${a.status !== 'acknowledged' ? `<button onclick="App.ackAlert(${a.id})" class="btn btn-sm btn-outline">Ack</button>` : '<span class="material-symbols-outlined" style="color:var(--md-safe); font-size:20px">check_circle</span>'}
+                        ${a.status !== 'acknowledged' ? `<button onclick="App.ackAlert(${Number(a.id)})" class="btn btn-sm btn-outline">Ack</button>` : '<span class="material-symbols-outlined" style="color:var(--md-safe); font-size:20px">check_circle</span>'}
                     </div>
                 </div>
             `).join('');
@@ -215,7 +222,7 @@ const App = {
                             stroke-linecap="round" transform="rotate(-90 28 28)"/>
                         <text x="28" y="33" text-anchor="middle" font-size="12" font-weight="600" fill="${color}">${t.score.toFixed(0)}</text>
                     </svg>
-                    <div style="font-weight:500; font-size:0.8125rem; text-align:center; word-break:break-all;">${t.scope_id}</div>
+                    <div style="font-weight:500; font-size:0.8125rem; text-align:center; word-break:break-all;">${esc(t.scope_id)}</div>
                     <div style="display:flex; align-items:center; gap:0.25rem; font-size:0.7rem; color:${color};">
                         <span class="material-symbols-outlined" style="font-size:14px">${scoreIcon(t.score)}</span>
                         ${scoreLabel(t.score)}
@@ -235,7 +242,7 @@ const App = {
                     <div style="margin-bottom:1.25rem;">
                         <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
                             <span class="material-symbols-outlined" style="font-size:18px; color:var(--md-on-surface-variant)">${s.icon}</span>
-                            <span style="font-size:0.75rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--md-on-surface-variant);">${s.label}</span>
+                            <span style="font-size:0.75rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--md-on-surface-variant);">${esc(s.label)}</span>
                         </div>
                         <div style="display:flex; flex-wrap:wrap; gap:0.75rem;">
                             ${groups[s.key].sort((a, b) => a.score - b.score).map(renderCard).join('')}
@@ -338,7 +345,7 @@ const App = {
             badge.id = 'scan-event-badge';
             badge.style.cssText = 'margin-bottom:0.75rem; padding:0.5rem 1rem; border-radius:8px; background:rgba(26,115,232,0.1); border:1px solid var(--md-primary); font-size:0.8125rem; display:flex; align-items:center; gap:0.5rem;';
             badge.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:var(--md-primary)">link</span>
-                <span>Linked to <strong>${data.bus_id}</strong> / Route <strong>${data.route_id}</strong> — Event <strong>#${data.event_id}</strong> logged${data.alert_id ? ` · Alert <strong>#${data.alert_id}</strong> raised` : ''}</span>`;
+                <span>Linked to <strong>${esc(data.bus_id)}</strong> / Route <strong>${esc(data.route_id)}</strong> — Event <strong>#${esc(data.event_id)}</strong> logged${data.alert_id ? ` · Alert <strong>#${esc(data.alert_id)}</strong> raised` : ''}</span>`;
             resultsDiv.prepend(badge);
         }
 
@@ -424,11 +431,11 @@ const App = {
                 const current = data.current_violence_model;
 
                 vSelectEl.innerHTML = data.available_violence_models.map(m =>
-                    `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`
+                    `<option value="${esc(m)}" ${m === current ? 'selected' : ''}>${esc(m)}</option>`
                 ).join('');
 
                 vMenuEl.innerHTML = data.available_violence_models.map(m =>
-                    `<li class="md-select-option ${m === current ? 'active' : ''}" data-value="${m}" role="option">${m}</li>`
+                    `<li class="md-select-option ${m === current ? 'active' : ''}" data-value="${esc(m)}" role="option">${esc(m)}</li>`
                 ).join('');
 
                 vValueEl.textContent = current || 'Select Model';
@@ -453,7 +460,7 @@ const App = {
             // Re-build options
             const current = sel.value;
             sel.innerHTML = '<option value="">— No bus selected —</option>' +
-                buses.map(b => `<option value="${b.bus_id}">${b.bus_id}</option>`).join('');
+                buses.map(b => `<option value="${esc(b.bus_id)}">${esc(b.bus_id)}</option>`).join('');
             if (current) sel.value = current;
             this.onScanBusChange(sel);
         } catch (e) { }
@@ -503,11 +510,11 @@ const App = {
             const valueSpan = wrapper.querySelector('.md-select-value');
 
             sourceSelect.innerHTML = cameras.map((cam, i) =>
-                `<option value="${cam.id}" ${i === 0 ? 'selected' : ''}>${cam.name}</option>`
+                `<option value="${esc(cam.id)}" ${i === 0 ? 'selected' : ''}>${esc(cam.name)}</option>`
             ).join('');
 
             menu.innerHTML = cameras.map((cam, i) =>
-                `<li class="md-select-option ${i === 0 ? 'active' : ''}" data-value="${cam.id}" role="option">${cam.name}</li>`
+                `<li class="md-select-option ${i === 0 ? 'active' : ''}" data-value="${esc(cam.id)}" role="option">${esc(cam.name)}</li>`
             ).join('');
 
             if (valueSpan && cameras.length > 0) {
@@ -526,13 +533,18 @@ const App = {
         this.loadROI();
     },
 
-    captureROIFrame() {
+    async streamUrl(source = '0') {
+        const { token } = await this.api('/stream/token', 'POST');
+        return `/stream/live?source=${encodeURIComponent(source)}&token=${encodeURIComponent(token)}`;
+    },
+
+    async captureROIFrame() {
         // Loads live feed image for ROI calibration
         const img = document.getElementById('preview-img');
         if (!img) return;
         // Point to live stream MJPEG (browser handles stream)
         // Add random query param to bust cache if re-clicked
-        img.src = `/stream/live?t=${Date.now()}`;
+        img.src = await this.streamUrl('0');
         this.toast('Live feed active on calibration area', 'success');
     },
 
@@ -700,7 +712,7 @@ const App = {
         }
     },
 
-    startStream() {
+    async startStream() {
         const custom = document.getElementById('stream-custom').value.trim();
         const source = custom || document.getElementById('stream-source').value;
         const feedImg = document.getElementById('live-feed');
@@ -723,7 +735,12 @@ const App = {
 
         // ── 2. Point the image at the stream endpoint ─────────────────
         feedImg.src = '';  // reset first to avoid stale frame
-        feedImg.src = `/stream/live?source=${encodeURIComponent(source)}`;
+        try {
+            feedImg.src = await this.streamUrl(source);
+        } catch (e) {
+            if (startBtn) startBtn.disabled = false;
+            return;
+        }
 
         // ── 3. When first MJPEG frame arrives → hide spinner, show feed
         const onLoad = () => {
@@ -923,12 +940,12 @@ App._loadBuses = async function () {
         wrap.innerHTML = `<table>
             <tr><th>Bus ID</th><th>Route</th><th>Model</th><th>Year</th><th>Capacity</th><th></th></tr>
             ${buses.map(b => `<tr>
-                <td><strong>${b.bus_id}</strong></td>
-                <td>${b.route_id}</td>
-                <td>${b.model}</td>
-                <td>${b.year}</td>
-                <td>${b.capacity}</td>
-                <td><button class="btn btn-sm btn-outline" style="padding:0 0.4rem" title="Delete" onclick="App.deleteBus('${b.bus_id}')">
+                <td><strong>${esc(b.bus_id)}</strong></td>
+                <td>${esc(b.route_id)}</td>
+                <td>${esc(b.model)}</td>
+                <td>${esc(b.year)}</td>
+                <td>${esc(b.capacity)}</td>
+                <td><button class="btn btn-sm btn-outline" style="padding:0 0.4rem" title="Delete" onclick="App.deleteBus('${esc(b.bus_id)}')">
                     <span class="material-symbols-outlined" style="font-size:16px;color:#ef4444">delete</span>
                 </button></td>
             </tr>`).join('')}
@@ -950,12 +967,12 @@ App._loadRoutes = async function () {
         wrap.innerHTML = `<table>
             <tr><th>Route ID</th><th>Name</th><th>From</th><th>To</th><th>Dist (km)</th><th></th></tr>
             ${routes.map(r => `<tr>
-                <td><strong>${r.route_id}</strong></td>
-                <td>${r.name}</td>
-                <td>${r.start_location}</td>
-                <td>${r.end_location}</td>
-                <td>${r.distance_km}</td>
-                <td><button class="btn btn-sm btn-outline" style="padding:0 0.4rem" title="Delete" onclick="App.deleteRoute('${r.route_id}')">
+                <td><strong>${esc(r.route_id)}</strong></td>
+                <td>${esc(r.name)}</td>
+                <td>${esc(r.start_location)}</td>
+                <td>${esc(r.end_location)}</td>
+                <td>${esc(r.distance_km)}</td>
+                <td><button class="btn btn-sm btn-outline" style="padding:0 0.4rem" title="Delete" onclick="App.deleteRoute('${esc(r.route_id)}')">
                     <span class="material-symbols-outlined" style="font-size:16px;color:#ef4444">delete</span>
                 </button></td>
             </tr>`).join('')}

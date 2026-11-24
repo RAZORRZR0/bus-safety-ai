@@ -1,18 +1,20 @@
 import logging
 import tempfile
 import threading
-from collections import deque
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Annotated
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 
 from app.core.security import (
     create_access_token,
+    create_stream_token,
     decode_access_token,
     generate_2fa_secret,
     hash_password,
@@ -21,6 +23,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models.domain import (
+    ID_PATTERN,
     Alert,
     Bus,
     BusCreate,
@@ -37,7 +40,7 @@ from app.models.domain import (
 )
 from app.core.config import settings
 from app.services.alerts import acknowledge_alert, create_alert
-from app.services.audit import append_audit
+from app.services.audit import append_audit, verify_chain
 from app.services.evidence import persist_evidence
 from app.services.inference import InferenceService
 from app.services.trust import apply_trust_impact
@@ -47,7 +50,7 @@ from app.services.feedback import FeedbackService
 from app.services.retrain import RetrainService
 
 logger = logging.getLogger("transport")
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 router = APIRouter()
 inference_service = InferenceService()
@@ -57,6 +60,52 @@ feedback_service = FeedbackService(retrain_service=retrain_service)
 _stream_cancel = threading.Event()
 # Files the dashboard uploaded for streaming; /stream/live only opens these, cameras and rtsp:// URLs.
 _uploaded_streams: set[str] = set()
+
+MB = 1024 * 1024
+MAX_IMAGE_BYTES = 10 * MB
+MAX_VIDEO_BYTES = 200 * MB
+VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+
+# Login throttling: per-username failures inside a sliding window (in-process; enough for one server).
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 300
+_login_failures: dict[str, deque] = defaultdict(deque)
+_login_lock = threading.Lock()
+
+
+async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an upload in chunks and stop as soon as it is too big, instead of buffering it all."""
+    chunks, size = [], 0
+    while chunk := await file.read(MB):
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(413, f"File too large (limit {max_bytes // MB} MB).")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    if not data:
+        raise HTTPException(400, "Empty upload.")
+    return data
+
+
+def _video_suffix(filename: str | None) -> str:
+    suffix = Path(filename or "clip.mp4").suffix.lower() or ".mp4"
+    if suffix not in VIDEO_SUFFIXES:
+        raise HTTPException(400, f"Unsupported video type. Use one of: {', '.join(sorted(VIDEO_SUFFIXES))}.")
+    return suffix
+
+
+def _too_many_failures(username: str) -> bool:
+    now = time.monotonic()
+    with _login_lock:
+        attempts = _login_failures[username]
+        while attempts and now - attempts[0] > LOGIN_WINDOW_SECONDS:
+            attempts.popleft()
+        return len(attempts) >= LOGIN_MAX_FAILURES
+
+
+def _record_failure(username: str) -> None:
+    with _login_lock:
+        _login_failures[username].append(time.monotonic())
 
 
 def _extract_token(auth_header: str | None) -> str:
@@ -71,6 +120,8 @@ def get_current_user(
 ) -> User:
     token = _extract_token(authorization)
     claims = decode_access_token(token)
+    if claims.get("scope") != "api":
+        raise HTTPException(status_code=401, detail="Wrong token type.")
     user = session.exec(select(User).where(User.username == claims["sub"])).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found.")
@@ -101,19 +152,19 @@ def favicon():
 
 
 @router.get("/model/status")
-def model_status():
+def model_status(_: Annotated[User, Depends(get_current_user)]):
     return inference_service.model_status()
 
 
 @router.get("/model/retrain-status")
-def retrain_status():
+def retrain_status(_: Annotated[User, Depends(get_current_user)]):
     return retrain_service.status
 
 
 @router.post("/model/switch")
 def model_switch(
     payload: dict,
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_admin),
 ):
     model_name = payload.get("model")
     violence_model_name = payload.get("violence_model")
@@ -132,33 +183,35 @@ def model_switch(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/roi/config")
-def get_roi():
-    roi = {
+def _roi() -> dict:
+    return {
         "roi_x1": settings.roi_x1, "roi_y1": settings.roi_y1,
         "roi_x2": settings.roi_x2, "roi_y2": settings.roi_y2,
     }
-    logger.debug("GET /roi/config → %s", roi)
-    return roi
+
+
+@router.get("/roi/config")
+def get_roi(_: Annotated[User, Depends(get_current_user)]):
+    return _roi()
 
 
 @router.post("/roi/config")
-def set_roi(payload: dict = Body(...), _: User = Depends(get_current_user)):
+def set_roi(payload: dict = Body(...), _: User = Depends(require_admin)):
     logger.info("POST /roi/config payload=%s", payload)
+    new = _roi()
     try:
-        for key in ("roi_x1", "roi_y1", "roi_x2", "roi_y2"):
+        for key in new:
             if key in payload:
-                val = float(payload[key])
-                if not (0.0 <= val <= 1.0):
-                    raise HTTPException(400, f"{key} must be between 0.0 and 1.0")
-                setattr(settings, key, val)
-                logger.debug("  set %s = %.4f", key, val)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("ROI config update FAILED")
-        raise HTTPException(500, f"ROI update error: {e}")
-    result = get_roi()
+                new[key] = float(payload[key])
+    except (TypeError, ValueError):
+        raise HTTPException(400, "ROI values must be numbers.")
+    if not all(0.0 <= v <= 1.0 for v in new.values()):
+        raise HTTPException(400, "ROI values must be between 0.0 and 1.0.")
+    if new["roi_x1"] >= new["roi_x2"] or new["roi_y1"] >= new["roi_y2"]:
+        raise HTTPException(400, "ROI must have x1 < x2 and y1 < y2.")
+    for key, val in new.items():  # apply only after the whole box is valid
+        setattr(settings, key, val)
+    result = _roi()
     logger.info("ROI updated → %s", result)
     return result
 
@@ -167,9 +220,9 @@ def set_roi(payload: dict = Body(...), _: User = Depends(get_current_user)):
 @router.post("/scan/video")
 async def scan_video(
     file: UploadFile = File(...),
-    bus_id: str | None = Form(None),
-    route_id: str | None = Form(None),
-    timeslot: str | None = Form(None),
+    bus_id: str | None = Form(None, pattern=ID_PATTERN),
+    route_id: str | None = Form(None, pattern=ID_PATTERN),
+    timeslot: str | None = Form(None, pattern=ID_PATTERN),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -180,8 +233,8 @@ async def scan_video(
     logger.info("POST /scan/video  filename=%s  bus=%s  route=%s", file.filename, bus_id, route_id)
     from app.services.evidence import hash_bytes, EVIDENCE_DIR
 
-    suffix = Path(file.filename or "clip.mp4").suffix or ".mp4"
-    data = await file.read()
+    suffix = _video_suffix(file.filename)
+    data = await _read_upload(file, MAX_VIDEO_BYTES)
     digest = hash_bytes(data)
 
     # Save as manual scan evidence in case we receive feedback
@@ -230,12 +283,11 @@ async def scan_video(
 
         logger.info("Unified scan result: %s", result)
         return result
-    except Exception as e:
+    except Exception:
         logger.exception("Unified scan FAILED")
         if dest_path.exists():
-
             dest_path.unlink()
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, "Video analysis failed. Check that the file is a readable video.")
 
 
 
@@ -245,9 +297,9 @@ async def upload_stream_file(
     _: User = Depends(get_current_user),
 ):
     """Upload a file to be used as a stream source."""
-    suffix = Path(file.filename or "stream.mp4").suffix or ".mp4"
+    suffix = _video_suffix(file.filename)
+    data = await _read_upload(file, MAX_VIDEO_BYTES)
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        data = await file.read()
         tmp.write(data)
         tmp_path = tmp.name
     _uploaded_streams.add(tmp_path)
@@ -256,9 +308,17 @@ async def upload_stream_file(
     return {"path": tmp_path, "filename": file.filename}
 
 
+@router.post("/stream/token")
+def stream_token(user: Annotated[User, Depends(get_current_user)]):
+    """One-minute token for /stream/live, since an <img> tag cannot send an Authorization header."""
+    return {"token": create_stream_token(user.username)}
+
+
 @router.get("/stream/live")
-def stream_live(source: str = "0"):
+def stream_live(token: str, source: str = "0"):
     """MJPEG stream with YOLO annotations. source=0 for webcam, or a file/RTSP path."""
+    if decode_access_token(token).get("scope") != "stream":
+        raise HTTPException(401, "Stream token required.")
     if not (source.isdigit() or source.startswith("rtsp://") or source in _uploaded_streams):
         raise HTTPException(400, "Source must be a camera index, an rtsp:// URL or an uploaded file.")
     _stream_cancel.clear()
@@ -322,7 +382,7 @@ def stream_live(source: str = "0"):
 
 
 @router.post("/stream/stop")
-def stream_stop():
+def stream_stop(_: Annotated[User, Depends(get_current_user)]):
     """Signal the live stream generator to stop and release the camera."""
     logger.info("POST /stream/stop — setting cancel event")
     _stream_cancel.set()
@@ -366,9 +426,14 @@ def register(payload: RegisterRequest, session: Annotated[Session, Depends(get_s
 
 @router.post("/auth/login")
 def login(payload: LoginRequest, session: Annotated[Session, Depends(get_session)]):
+    if _too_many_failures(payload.username):
+        raise HTTPException(status_code=429, detail="Too many failed logins. Try again in a few minutes.")
     user = session.exec(select(User).where(User.username == payload.username)).first()
     if not user or not verify_password(payload.password, user.password_hash):
+        _record_failure(payload.username)
         raise HTTPException(status_code=401, detail="Invalid credentials.")
+    with _login_lock:
+        _login_failures.pop(payload.username, None)
     needs_2fa = settings.require_2fa
     token = create_access_token(user.username, mfa=not needs_2fa)
     return {"access_token": token, "token_type": "bearer", "twofa_required": needs_2fa}
@@ -376,11 +441,17 @@ def login(payload: LoginRequest, session: Annotated[Session, Depends(get_session
 
 @router.post("/auth/verify-2fa")
 def verify_2fa(payload: Verify2FARequest, session: Annotated[Session, Depends(get_session)]):
-    username = decode_access_token(payload.token)["sub"]
+    claims = decode_access_token(payload.token)
+    if claims.get("scope") != "api":
+        raise HTTPException(status_code=401, detail="Wrong token type.")
+    username = claims["sub"]
+    if _too_many_failures("2fa:" + username):
+        raise HTTPException(status_code=429, detail="Too many wrong codes. Log in again later.")
     user = session.exec(select(User).where(User.username == username)).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found.")
     if not verify_2fa_code(user.twofa_secret, payload.code):
+        _record_failure("2fa:" + username)
         raise HTTPException(status_code=401, detail="Invalid 2FA code.")
     user.twofa_verified = True
     session.add(user)
@@ -435,18 +506,16 @@ def ingest_event(
 
 @router.post("/ingest/frame")
 async def ingest_frame(
-    bus_id: str,
-    route_id: str,
-    timeslot: str,
-    reserved_seats_total: int = 4,
+    bus_id: Annotated[str, Query(pattern=ID_PATTERN)],
+    route_id: Annotated[str, Query(pattern=ID_PATTERN)],
+    timeslot: Annotated[str, Query(pattern=ID_PATTERN)],
+    reserved_seats_total: Annotated[int, Query(ge=0, le=100)] = 4,
     special_category_present: bool = False,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     _: User = Depends(get_current_user),
 ):
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Empty upload.")
+    raw = await _read_upload(file, MAX_IMAGE_BYTES)
     npbuf = np.frombuffer(raw, dtype=np.uint8)
     frame = cv2.imdecode(npbuf, cv2.IMREAD_COLOR)
     if frame is None:
@@ -507,9 +576,7 @@ async def frame_preview(
     _: User = Depends(get_current_user),
 ):
     """Return an annotated JPEG with YOLO bounding boxes drawn on the frame."""
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Empty upload.")
+    raw = await _read_upload(file, MAX_IMAGE_BYTES)
     npbuf = np.frombuffer(raw, dtype=np.uint8)
     frame = cv2.imdecode(npbuf, cv2.IMREAD_COLOR)
     if frame is None:
@@ -521,7 +588,7 @@ async def frame_preview(
 
 @router.post("/ingest/evidence")
 async def ingest_evidence(
-    bus_id: str,
+    bus_id: Annotated[str, Query(pattern=ID_PATTERN)],
     event_id: int,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
@@ -530,9 +597,7 @@ async def ingest_evidence(
     event = session.get(ViolationEvent, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Empty upload.")
+    raw = await _read_upload(file, MAX_VIDEO_BYTES)
     path, digest = persist_evidence(bus_id, raw)
     event.evidence_hash = digest
     session.add(event)
@@ -590,12 +655,8 @@ def list_events(
 def audit_chain_status(
     _: Annotated[User, Depends(require_admin)],
 ):
-    from app.services.audit import CHAIN_FILE
-
-    if not CHAIN_FILE.exists():
-        return {"exists": False, "entries": 0}
-    lines = CHAIN_FILE.read_text(encoding="utf-8").strip().splitlines()
-    return {"exists": True, "entries": len(lines)}
+    """Recompute the whole hash chain and report whether any entry was tampered with."""
+    return verify_chain()
 
 
 @router.post("/feedback")
@@ -639,7 +700,7 @@ def create_bus(
 def delete_bus(
     bus_id: str,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    _: Annotated[User, Depends(require_admin)],
 ):
     bus = session.exec(select(Bus).where(Bus.bus_id == bus_id)).first()
     if not bus:
@@ -676,7 +737,7 @@ def create_route(
 def delete_route(
     route_id: str,
     session: Annotated[Session, Depends(get_session)],
-    _: Annotated[User, Depends(get_current_user)],
+    _: Annotated[User, Depends(require_admin)],
 ):
     route = session.exec(select(Route).where(Route.route_id == route_id)).first()
     if not route:

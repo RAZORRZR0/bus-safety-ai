@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 
 from app.models.domain import EventIngestRequest, ViolationEvent
 from app.services import audit
@@ -48,3 +49,11 @@ def test_audit_chain_links_and_detects_tampering():
     assert recompute(b) == b["entry_hash"]
     b["payload"]["id"] = 3
     assert recompute(b) != b["entry_hash"]
+
+
+def test_evidence_filename_cannot_escape_the_folder(tmp_path, monkeypatch):
+    from app.services import evidence
+
+    monkeypatch.setattr(evidence, "EVIDENCE_DIR", tmp_path)
+    path, _ = evidence.persist_evidence("../../evil", b"data")
+    assert Path(path).parent == tmp_path

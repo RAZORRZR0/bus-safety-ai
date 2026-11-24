@@ -19,10 +19,16 @@ def verify_password(password: str, hashed: str) -> bool:
     return pwd_context.verify(password, hashed)
 
 
+PRE_2FA_TOKEN_MINUTES = 5
+STREAM_TOKEN_SECONDS = 60
+
+
 def create_access_token(subject: str, mfa: bool = True) -> str:
-    """`mfa` marks whether the second factor was passed; only such tokens open the API."""
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.token_exp_minutes)
-    payload = {"sub": subject, "exp": expire, "mfa": mfa}
+    """`mfa` marks whether the second factor was passed; only such tokens open the API.
+    A pre-2FA token is only good for /auth/verify-2fa, so it expires quickly."""
+    minutes = settings.token_exp_minutes if mfa else PRE_2FA_TOKEN_MINUTES
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    payload = {"sub": subject, "exp": expire, "mfa": mfa, "scope": "api"}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -36,6 +42,13 @@ def decode_access_token(token: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token."
         ) from exc
+
+
+def create_stream_token(subject: str) -> str:
+    """Short-lived token for the MJPEG stream, which an <img> tag can only pass in the URL."""
+    expire = datetime.now(timezone.utc) + timedelta(seconds=STREAM_TOKEN_SECONDS)
+    return jwt.encode({"sub": subject, "exp": expire, "scope": "stream"},
+                      settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def generate_2fa_secret() -> str:
